@@ -1,11 +1,13 @@
 import os
 import re
 import math
+import time
+import asyncio
 from typing import Annotated
 from typing_extensions import TypedDict
 from langchain_core.tools import tool
 from langchain.agents import Tool
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import ToolMessage, AIMessageChunk, AIMessage
 from langgraph.graph import StateGraph, START
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -18,7 +20,7 @@ from utils.render import render
 
 load_dotenv()
 openai_key = os.environ["OPENAI_API_KEY"]
-llm = init_chat_model(api_key=openai_key, model="gpt-4-turbo")
+llm = init_chat_model(api_key=openai_key, model="gpt-4-turbo", streaming=True)
 
 # --- Define Tool ---
 @tool
@@ -48,11 +50,11 @@ def runSql(tool_input: str = "") -> list:
         connection_pool = pool.SimpleConnectionPool(
             1,
             10,
-            user=
-            password=
-            host=
-            database=
-            port=
+            user="upsolve",
+            password="bgq6XED!gpv5jyx*jvx",
+            host="upsolve-pg-instance-1.c7r9gwixnn8o.us-east-1.rds.amazonaws.com",
+            database="moneybank",
+            port=5432,
         )
 
         conn = connection_pool.getconn()
@@ -94,42 +96,80 @@ llm_with_tools = llm.bind_tools(tools)
 class State(TypedDict):
     messages: Annotated[list, add_messages]
 
+
 # --- LLM Node (detects tool usage) ---
-def call_llm(state: State):
-    last_msg = state['messages'][-1]
-    if isinstance(last_msg, ToolMessage):
-        return {'messages': state['messages']}
-    return {'messages': [llm_with_tools.invoke(state['messages'])]}
+def make_llm_node(llm_with_tools, token_stream_callback=None):
+    async def call_llm(state: State):
+        last_msg = state["messages"][-1]
+        if isinstance(last_msg, ToolMessage):
+            yield {"messages": state["messages"]}
+            return
 
-# --- Tool Executor Node ---
-tool_node = ToolNode(tools)
+        collected_chunks = []
 
-graph_builder = StateGraph(State)
-graph_builder.add_node("llm", call_llm)
-graph_builder.add_node("tools", tool_node)
-graph_builder.set_entry_point("llm")
-graph_builder.add_conditional_edges("llm", tools_condition)
-graph_builder.add_edge("tools", "llm")
-
-graph = graph_builder.compile()
-
-# --- Render Graph (optional) ---
-# render(graph)
-
-def stream_graph_updates(user_input: str):
-    for event in graph.stream({"messages": [{"role": "user", "content": user_input}]}):
-        for value in event.values():
-            print("INTERNAL CAPTURE: ", value)
-            print("Assistant: ", value["messages"][-1].content)
+        # Streaming LLM output
+        async for chunk in llm_with_tools.astream(state["messages"]):
+            print(chunk)
+            if token_stream_callback:
+                await token_stream_callback(chunk.content)
+            collected_chunks.append(chunk)
+        
+        if token_stream_callback:
+            await token_stream_callback("[DONE]")
+        
+        print(f"Yielding final chunks: ${collected_chunks}")
+        yield {"messages": collected_chunks}
+        
+    return call_llm
 
 
-def main():
+# --- Build Graph function ---
+def build_graph(token_stream_callback=None):
+    graph_builder = StateGraph(State)
+
+    # --- Make LLM Node ---
+    llm_node = make_llm_node(llm_with_tools, token_stream_callback)
+
+    # --- Tool Executor Node ---
+    tool_node = ToolNode(tools)
+
+    graph_builder.add_node("llm", llm_node)
+    graph_builder.add_node("tools", tool_node)
+
+    graph_builder.set_entry_point("llm")
+
+    graph_builder.add_conditional_edges("llm", tools_condition)
+    graph_builder.add_edge("tools", "llm")
+
+    # --- Render Graph (optional) ---
+    # render(graph)
+
+    return graph_builder.compile()
+
+
+
+async def stream_graph_updates(graph, user_input: str):
+    print("Assistant: ", end="", flush=True)
+
+    async for step in graph.astream({"messages": [{"role": "user", "content": user_input}]}):
+        for node_output in step.values():
+            for msg in node_output.get("messages", []):
+                content = getattr(msg, "content", None)
+                if content:
+                    print(content, end="", flush=True)
+
+    print()
+
+
+async def main():
+    graph = build_graph()
     while True:
         user_input = input("User: ")
         if user_input.lower() in ["quit", "exit", "q"]:
             print("exiting")
             break
-        stream_graph_updates(user_input)
-            
+        await stream_graph_updates(graph, user_input)
 
-main()
+
+if __name__ == "__main__":
+    asyncio.run(main())
