@@ -32,9 +32,12 @@ def multiply(input: str) -> int:
     - "2 3"
     - "multiply 2 and 3"
     """
+    print("executing multiply")
     numbers = list(map(int, re.findall(r"\d+", input)))
     if len(numbers) < 2:
         raise ValueError("Please provide at least 2 numbers to multiply")
+    
+    print("math.prod(numbers[:2]): ", math.prod(numbers[:2]))
     return math.prod(numbers[:2])
 
 @tool
@@ -50,11 +53,11 @@ def runSql(tool_input: str = "") -> list:
         connection_pool = pool.SimpleConnectionPool(
             1,
             10,
-            user="upsolve",
-            password="bgq6XED!gpv5jyx*jvx",
-            host="upsolve-pg-instance-1.c7r9gwixnn8o.us-east-1.rds.amazonaws.com",
-            database="moneybank",
-            port=5432,
+            user="",
+            password="",
+            host="",
+            database="",
+            port=,
         )
 
         conn = connection_pool.getconn()
@@ -79,7 +82,7 @@ tools = [
     Tool(
         name="multiply",
         func=multiply,
-        description="Multiplies two integers together"
+        description="Multiplies two integers together. Input must be a string containing two numbers, like '4,3' or '4 * 3'. Parameter name is 'input'."
     ),
     Tool(
         name="get_data",
@@ -97,28 +100,89 @@ class State(TypedDict):
     messages: Annotated[list, add_messages]
 
 
+def aggregate_tool_calls(tool_calls_accumulator):
+    grouped = {}
+
+    for call in tool_calls_accumulator:
+        idx = call.get("index")
+        if idx is None:
+            continue
+
+        if idx not in grouped:
+            grouped[idx] = {
+                "index": idx,
+                "id": call.get("id"),
+                "name": call.get("function", {}).get("name"),
+                "arguments": call.get("function", {}).get("arguments", ""),
+                "type": call.get("type"),
+            }
+        else:
+            grouped[idx]["arguments"] += call.get("function", {}).get("arguments", "")
+
+        # Prefer non-None values if found in later chunks
+        if not grouped[idx]["id"] and call.get("id"):
+            grouped[idx]["id"] = call["id"]
+        if not grouped[idx]["name"] and call.get("function", {}).get("name"):
+            grouped[idx]["name"] = call["function"]["name"]
+        if not grouped[idx]["type"] and call.get("type"):
+            grouped[idx]["type"] = call["type"]
+
+    # Convert back to expected format
+    aggregated_calls = []
+    for val in grouped.values():
+        aggregated_calls.append({
+            "index": val["index"],
+            "id": val["id"],
+            "function": {
+                "name": val["name"],
+                "arguments": val["arguments"]
+            },
+            "type": val["type"]
+        })
+
+    return aggregated_calls
+
+
+
 # --- LLM Node (detects tool usage) ---
 def make_llm_node(llm_with_tools, token_stream_callback=None):
     async def call_llm(state: State):
         last_msg = state["messages"][-1]
         if isinstance(last_msg, ToolMessage):
             yield {"messages": state["messages"]}
+            # Already tool input, just pass through
+            # yield {"tool_calls": last_msg.tool_calls}
             return
 
         collected_chunks = []
+        content_accumulator = []
+        tool_calls_accumulator = []
 
         # Streaming LLM output
         async for chunk in llm_with_tools.astream(state["messages"]):
             print(chunk)
+            collected_chunks.append(chunk)
+
             if token_stream_callback:
                 await token_stream_callback(chunk.content)
-            collected_chunks.append(chunk)
+            if chunk.content:
+                content_accumulator.append(chunk.content)
+            if "tool_calls" in chunk.additional_kwargs:
+                tool_calls_accumulator.extend(chunk.additional_kwargs["tool_calls"])
         
         if token_stream_callback:
             await token_stream_callback("[DONE]")
         
-        print(f"Yielding final chunks: ${collected_chunks}")
-        yield {"messages": collected_chunks}
+        full_content = "".join(content_accumulator)
+
+        aggregated = aggregate_tool_calls(tool_calls_accumulator)
+        print("tool_calls_accumulator: ", tool_calls_accumulator)
+        print("aggregated: ", aggregated)
+        if aggregated:
+            # TODO: try this but set aggregated as an actually properly typed ToolNode
+            yield {"tool_calls": aggregated, "messages": [AIMessage(content=full_content)]}
+        # print(f"Yielding final chunks: ${collected_chunks}")
+        yield {"messages": [AIMessage(content=full_content)]}
         
     return call_llm
 
