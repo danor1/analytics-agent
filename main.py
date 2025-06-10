@@ -19,85 +19,14 @@ import psycopg2
 from psycopg2 import pool
 
 from utils.render import render 
+from tools.tools import tools
+
 
 load_dotenv()
 openai_key = os.environ["OPENAI_API_KEY"]
 llm = init_chat_model(api_key=openai_key, model="gpt-4-turbo", streaming=True)
 
-class MultiplyInput(BaseModel):
-    input: str
-
-# --- Define Tool ---
-@tool(args_schema=MultiplyInput)
-def multiply(input: str) -> int:
-    """
-    Multiply two numbers. Accepts input like:
-    - "2,3"
-    - "2 * 3"
-    - "2 3"
-    - "multiply 2 and 3"
-    """
-    print("executing multiply")
-    numbers = list(map(int, re.findall(r"\d+", input)))
-    if len(numbers) < 2:
-        raise ValueError("Please provide at least 2 numbers to multiply")
-    
-    print("math.prod(numbers[:2]): ", math.prod(numbers[:2]))
-    return math.prod(numbers[:2])
-
-@tool
-def runSql(tool_input: str = "") -> list:
-    """
-    Executes a SQL query to fetch all records from the transactions table in the PostgreSQL database.
-    Returns the query results as a list of tuples.
-    
-    Args:
-        tool_input (str): Optional input parameter (not used in this implementation)
-    """
-    try:
-        connection_pool = pool.SimpleConnectionPool(
-            1,
-            10,
-            user=process.env.DB_USER,
-            password=process.env.DB_PASSWORD,
-            host=process.env.DB_HOST,
-            database=process.env.DB_NAME,
-            port=process.env.DB_PORT,
-        )
-
-        conn = connection_pool.getconn()
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT * from transactions")
-        results = cursor.fetchall()
-        # print(f"results: {results}")
-
-        cursor.close()
-        connection_pool.putconn(conn)
-    except Exception as e:
-        print(f"Error: {e}")
-        return None
-    finally:
-        if 'connection_pool' in locals():
-            connection_pool.closeall()
-        return results
-
-
-tools = [
-    Tool(
-        name="multiply",
-        func=multiply,
-        description="Multiplies two integers together. Input must be a string containing two numbers, like '4,3' or '4 * 3'. Parameter name is 'input'."
-    ),
-    Tool(
-        name="get_data",
-        func=runSql,
-        description="gets data from postgres database"
-    )
-]
 llm_with_tools = llm.bind_tools(tools)
-# or define with:
-# agents = initialize_agent(tools=tools, llm=llm, agent_type="openai-tools", verbose=True)
 
 
 # --- Define Graph State ----
