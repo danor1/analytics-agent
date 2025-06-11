@@ -340,5 +340,6 @@ tools = [
 
 
 # run the following sql "select * from transactions limit 1"
-# generate sql for "spend by user"
+# generate sql for "spend by category"
 # generate analytical questions to "who spent the most"
+# generate sql for "spend by category" and execute it
