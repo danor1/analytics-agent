@@ -96,13 +96,6 @@ def aggregate_tool_calls(tool_calls_accumulator):
 def make_llm_node(llm_with_tools, token_stream_callback=None):
     async def call_llm(state: State):
         last_msg = state["messages"][-1]
-        # seems removing this prevents a tool message being returned to the llm node from running infinitely
-        # if isinstance(last_msg, ToolMessage):
-        #     print("yielding early")
-        #     yield {"messages": state["messages"]}
-        #     # Already tool input, just pass through
-        #     # yield {"tool_calls": last_msg.tool_calls}
-        #     return
 
         collected_chunks = []
         content_accumulator = []
@@ -201,7 +194,6 @@ def custom_tools_condition(state: State) -> str:
     print("custom_tools_condition last_msg: ", last_msg)
 
     # If we have a tool message, we should continue to the LLM to process the result
-    # THIS CAUSES THE TOOL TO RERUN INFINITELY
     if isinstance(last_msg, ToolMessage):
         return "llm"
     
