@@ -28,6 +28,19 @@ llm = init_chat_model(api_key=openai_key, model="gpt-4-turbo", streaming=True)
 
 llm_with_tools = llm.bind_tools(tools)
 
+# System message to guide the LLM
+SYSTEM_MESSAGE = """You are a helpful AI assistant that can use tools to accomplish tasks.
+When given a task that requires multiple steps:
+1. Break down the task into steps
+2. Use the appropriate tools in sequence
+3. After each tool call, analyze the result and determine if more steps are needed
+4. Continue until the task is complete
+5. Provide a clear final response summarizing the results
+
+For example, if asked to "generate SQL for spend by user and run it":
+1. First use text_to_sql to generate the SQL query
+2. Then use run_sql to execute the generated query
+3. Finally, present the results in a clear format"""
 
 # --- Define Graph State ----
 class State(TypedDict):
@@ -83,12 +96,13 @@ def aggregate_tool_calls(tool_calls_accumulator):
 def make_llm_node(llm_with_tools, token_stream_callback=None):
     async def call_llm(state: State):
         last_msg = state["messages"][-1]
-        if isinstance(last_msg, ToolMessage):
-            print("yielding early")
-            yield {"messages": state["messages"]}
-            # Already tool input, just pass through
-            # yield {"tool_calls": last_msg.tool_calls}
-            return
+        # seems removing this prevents a tool message being returned to the llm node from running infinitely
+        # if isinstance(last_msg, ToolMessage):
+        #     print("yielding early")
+        #     yield {"messages": state["messages"]}
+        #     # Already tool input, just pass through
+        #     # yield {"tool_calls": last_msg.tool_calls}
+        #     return
 
         collected_chunks = []
         content_accumulator = []
@@ -184,14 +198,19 @@ def end_node(state: State) -> State:
 
 def custom_tools_condition(state: State) -> str:
     last_msg = state["messages"][-1]
-
     print("custom_tools_condition last_msg: ", last_msg)
 
+    # If we have a tool message, we should continue to the LLM to process the result
+    # THIS CAUSES THE TOOL TO RERUN INFINITELY
+    if isinstance(last_msg, ToolMessage):
+        return "llm"
+    
+    # If we have an AI message with tool calls, execute them
     if isinstance(last_msg, AIMessage) and getattr(last_msg, "tool_calls", None):
         return "tools"
     
+    # If we have a regular AI message without tool calls, we're done
     return 'end'
-    # return "tools" if state.get("tool_calls") else "llm"
 
 # --- Build Graph function ---
 def build_graph(token_stream_callback=None):
@@ -222,7 +241,15 @@ def build_graph(token_stream_callback=None):
 async def stream_graph_updates(graph, user_input: str):
     print("Assistant: ", end="", flush=True)
 
-    async for step in graph.astream({"messages": [{"role": "user", "content": user_input}]}):
+    # Add system message to the initial state
+    initial_state = {
+        "messages": [
+            {"role": "system", "content": SYSTEM_MESSAGE},
+            {"role": "user", "content": user_input}
+        ]
+    }
+
+    async for step in graph.astream(initial_state):
         for node_output in step.values():
             for msg in node_output.get("messages", []):
                 content = getattr(msg, "content", None)
