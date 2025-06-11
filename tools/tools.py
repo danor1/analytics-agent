@@ -156,6 +156,7 @@ def run_sql(query: str = "") -> list:
 
         cursor.execute(query)
         results = cursor.fetchall()
+        print("run_sql results: ", results)
 
         cursor.close()
         connection_pool.putconn(conn)
@@ -225,7 +226,7 @@ def text_to_sql_from_schema(query: str = "", schema: dict = {}) -> str:
     ]
 
     response = llm.invoke(messages)
-    print("response: ", response)
+    print("text_to_sql_from_schema response: ", response)
 
     return response.content.strip()
 
@@ -282,7 +283,7 @@ def generate_questions_from_schema(query: str = "", schema: dict = {}) -> list:
     ]
 
     response = llm.invoke(messages)
-    print("response: ", response)
+    print("generate_questions_from_schema response: ", response)
 
     try:
         # Parse the JSON string into a list of questions
@@ -296,6 +297,8 @@ def generate_questions_from_schema(query: str = "", schema: dict = {}) -> list:
 @tool(args_schema=TextToSqlInput)
 def text_to_sql(
     query: str
+    # state: Annotated[AgentState, InjectedState],  # TODO: bring these back but need to pass in state and config into the tool call
+    # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
 ) -> str:
     """Generates sql from a main query."""
     return text_to_sql_from_schema(query, transactions_schema)
@@ -336,5 +339,6 @@ tools = [
 ]
 
 
-# generate analytical questions to "who spent the most"
+# run the following sql "select * from transactions limit 1"
 # generate sql for "spend by user"
+# generate analytical questions to "who spent the most"
