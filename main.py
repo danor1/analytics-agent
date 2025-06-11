@@ -113,8 +113,8 @@ def make_llm_node(llm_with_tools, token_stream_callback=None):
             if "tool_calls" in chunk.additional_kwargs:
                 tool_calls_accumulator.extend(chunk.additional_kwargs["tool_calls"])
         
-        if token_stream_callback:
-            await token_stream_callback("[DONE]")
+        # if token_stream_callback:
+        #     await token_stream_callback("[DONE]")
         
         full_content = "".join(content_accumulator)
 
@@ -168,9 +168,15 @@ def make_llm_node(llm_with_tools, token_stream_callback=None):
         
     return call_llm
 
-def end_node(state: State) -> State:
-    print("[end_node] Final state: ", state)
-    return state
+def make_end_node(token_stream_callback=None):
+    async def end_node(state: State) -> State:
+        if token_stream_callback:
+            await token_stream_callback("[DONE]")
+        
+        print("[end_node] Final state: ", state)
+        return state
+    
+    return end_node
 
 # temporary - to remove
 # async def tool_executor(state: State):
@@ -208,15 +214,18 @@ def custom_tools_condition(state: State) -> str:
 def build_graph(token_stream_callback=None):
     graph_builder = StateGraph(State)
 
-    # --- Make LLM Node ---
+    # --- LLM Node ---
     llm_node = make_llm_node(llm_with_tools, token_stream_callback)
 
     # --- Tool Executor Node ---
     tool_node = ToolNode(tools)
 
+    # --- End Node ---
+    end_node = make_end_node(token_stream_callback)
+
     graph_builder.add_node("llm", llm_node)
     graph_builder.add_node("tools", tool_node)
-    graph_builder.add_node("end", lambda state: state)
+    graph_builder.add_node("end", end_node)
 
     graph_builder.set_entry_point("llm")
 
