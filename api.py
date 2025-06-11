@@ -6,6 +6,20 @@ import asyncio
 import uvicorn
 from main import build_graph
 
+# System message to guide the LLM
+SYSTEM_MESSAGE = """You are a helpful AI assistant that can use tools to accomplish tasks.
+When given a task that requires multiple steps:
+1. Break down the task into steps
+2. Use the appropriate tools in sequence
+3. After each tool call, analyze the result and determine if more steps are needed
+4. Continue until the task is complete
+5. Provide a clear final response summarizing the results
+
+For example, if asked to "generate SQL for spend by user and run it":
+1. First use text_to_sql to generate the SQL query
+2. Then use run_sql to execute the generated query
+3. Finally, present the results in a clear format"""
+
 app = FastAPI(title="Agent API")
 
 class ChatRequest(BaseModel):
@@ -21,8 +35,15 @@ async def chat(req: ChatRequest):
         
         graph = build_graph(token_callback)
 
+        initial_state = {
+            "messages": [
+                {"role": "system", "content": SYSTEM_MESSAGE},
+                {"role": "user", "content": req.input}
+            ]
+        }
+
         async def run_graph():
-            async for _ in graph.astream({"messages": [{"role": "user", "content": req.input}]}):
+            async for _ in graph.astream(initial_state):
                 pass  # potentially need to log here? this would log stuff on the server side
 
         asyncio.create_task(run_graph())
