@@ -338,6 +338,8 @@ tools = [
     )
 ]
 
+# TODO: create chart tool
+
 
 # run the following sql "select * from transactions limit 1"
 # generate sql for "spend by category"

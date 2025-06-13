@@ -1,11 +1,14 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 import asyncio
 import uvicorn
 from main import build_graph
 
+
+# TODO: bring local SYSTEM_MESSAGE in alignment and bring back table formatting
 # System message to guide the LLM
 SYSTEM_MESSAGE = """You are a helpful AI assistant that can use tools to accomplish tasks.
 When given a task that requires multiple steps:
@@ -13,14 +16,42 @@ When given a task that requires multiple steps:
 2. Use the appropriate tools in sequence
 3. After each tool call, analyze the result and determine if more steps are needed
 4. Continue until the task is complete
-5. Provide a clear final response summarizing the results
+5. Provide a clear final response summarizing the results in valid markdown format
 
 For example, if asked to "generate SQL for spend by user and run it":
 1. First use text_to_sql to generate the SQL query
 2. Then use run_sql to execute the generated query
-3. Finally, present the results in a clear format"""
+3. Finally, present the results in a clear format using markdown
+
+Always format your final response using markdown:
+- Use # for main headings
+- Use ## for subheadings
+- Use ``` for code blocks with appropriate language specification
+- Use - or * for bullet points
+- Use ** for bold text
+- Use * for italic text
+- Use > for blockquotes
+- Use [text](url) for links
+
+Important formatting rules:
+- Always add two newlines after headings
+- Always add one newline after paragraphs
+- Always add one newline after list items
+- Always add one newline before and after code blocks
+- Always add one newline before and after blockquotes
+- Use double newlines to create clear section breaks
+- NEVER use table formatting (|) - instead use bullet points or code blocks for structured data
+"""
 
 app = FastAPI(title="Agent API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
 class ChatRequest(BaseModel):
     input: str
@@ -31,7 +62,12 @@ async def chat(req: ChatRequest):
         queue = asyncio.Queue()
 
         async def token_callback(token: str):
-            await queue.put(token)
+            if token == '\n':
+                await queue.put('[NEWLINE]')
+            elif token == '\n\n':
+                await queue.put('[DOUBLENEWLINE]')
+            else:
+                await queue.put(token)
         
         graph = build_graph(token_callback)
 
@@ -44,13 +80,19 @@ async def chat(req: ChatRequest):
 
         async def run_graph():
             async for _ in graph.astream(initial_state):
-                pass  # potentially need to log here? this would log stuff on the server side
+                pass
 
         asyncio.create_task(run_graph())
 
         while True:
             token = await queue.get()
-            yield f"data: {token}\n\n";
+            # Send the token as-is, including newlines
+            if token == '\n':
+                yield f"data: [NEWLINE]\n\n"
+            elif token == '\n\n':
+                yield f"data: [DOUBLENEWLINE]\n\n"
+            else:
+                yield f"data: {token}\n\n"
             if token == "[DONE]":
                 break
     

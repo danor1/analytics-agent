@@ -35,12 +35,32 @@ When given a task that requires multiple steps:
 2. Use the appropriate tools in sequence
 3. After each tool call, analyze the result and determine if more steps are needed
 4. Continue until the task is complete
-5. Provide a clear final response summarizing the results
+5. Provide a clear final response summarizing the results in valid markdown format
 
 For example, if asked to "generate SQL for spend by user and run it":
 1. First use text_to_sql to generate the SQL query
 2. Then use run_sql to execute the generated query
-3. Finally, present the results in a clear format"""
+3. Finally, present the results in a clear format using markdown
+
+Always format your final response using markdown:
+- Use # for main headings
+- Use ## for subheadings
+- Use ``` for code blocks with appropriate language specification
+- Use - or * for bullet points
+- Use ** for bold text
+- Use * for italic text
+- Use > for blockquotes
+- Use | for tables
+- Use [text](url) for links
+
+Important formatting rules:
+- Always add two newlines after headings
+- Always add one newline after paragraphs
+- Always add one newline after list items
+- Always add one newline before and after code blocks
+- Always add one newline before and after tables
+- Always add one newline before and after blockquotes
+- Use double newlines to create clear section breaks"""
 
 # --- Define Graph State ----
 class State(TypedDict):
