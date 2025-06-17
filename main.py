@@ -19,14 +19,17 @@ import psycopg2
 from psycopg2 import pool
 
 from utils.render import render 
-from tools.tools import tools
+from tools.tools import define_tools
 
 
 load_dotenv()
-openai_key = os.environ["OPENAI_API_KEY"]
-llm = init_chat_model(api_key=openai_key, model="gpt-4-turbo", streaming=True)
+llm = init_chat_model(
+    model="gpt-4-turbo",
+    temperature=0,
+    api_key=os.environ["OPENAI_API_KEY"],
+    streaming=True
+    )
 
-llm_with_tools = llm.bind_tools(tools)
 
 # System message to guide the LLM
 SYSTEM_MESSAGE = """You are a helpful AI assistant that can use tools to accomplish tasks.
@@ -117,7 +120,7 @@ def make_llm_node(llm_with_tools, token_stream_callback=None):
     async def call_llm(state: State):
         last_msg = state["messages"][-1]
 
-        collected_chunks = []
+        collected_chunks = []  # this appears to be unused
         content_accumulator = []
         tool_calls_accumulator = []
 
@@ -126,6 +129,7 @@ def make_llm_node(llm_with_tools, token_stream_callback=None):
             print(chunk)
             collected_chunks.append(chunk)
 
+            # TODO: here and in tools check if chunk.content is not null
             if token_stream_callback:
                 await token_stream_callback(chunk.content)
             if chunk.content:
@@ -233,6 +237,11 @@ def custom_tools_condition(state: State) -> str:
 # --- Build Graph function ---
 def build_graph(token_stream_callback=None):
     graph_builder = StateGraph(State)
+
+    # Define tools and attach to llm
+    tools = define_tools(token_stream_callback)
+    llm_with_tools = llm.bind_tools(tools)
+
 
     # --- LLM Node ---
     llm_node = make_llm_node(llm_with_tools, token_stream_callback)

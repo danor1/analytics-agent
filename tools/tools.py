@@ -1,18 +1,21 @@
 import os
 import re
 import math
-from typing import Annotated
+import json
+import asyncio
+from typing import Annotated, Optional, Callable
 from pydantic import BaseModel
 from langchain_core.tools import tool, Tool
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
+# from langgraph.graph import AsyncTool
 from langgraph.prebuilt import InjectedState
 from langgraph.prebuilt.chat_agent_executor import AgentState
-from langchain_openai import ChatOpenAI
+# from langchain_openai import ChatOpenAI
+from langchain.chat_models import init_chat_model
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2 import pool
-import json
 
 
 load_dotenv()
@@ -88,10 +91,16 @@ transactions_schema = {
 }
 
 
-llm = ChatOpenAI(
-    model="gpt-4-turbo-preview",
+# llm = ChatOpenAI(
+#     model="gpt-4-turbo-preview",
+#     temperature=0,
+#     api_key=os.environ["OPENAI_API_KEY"]
+# )
+llm = init_chat_model(
+    model="gpt-4-turbo",
     temperature=0,
-    api_key=os.environ["OPENAI_API_KEY"]
+    api_key=os.environ["OPENAI_API_KEY"],
+    streaming=True
 )
 
 
@@ -169,14 +178,15 @@ def run_sql(query: str = "") -> list:
         return results
 
 
-def text_to_sql_from_schema(query: str = "", schema: dict = {}) -> str:
+async def text_to_sql_from_schema(query: str = "", schema: dict = {}, token_stream_callback=None) -> str:
     """
     Inner function that generates a SQL query based on the input text description.
     
     Args:
         query (str): Natural language description of the desired SQL query
+        schema (dict): The schema to use for generating the SQL query
+        token_stream_callback (callable): Optional callback for streaming tokens
     """
-
     messages = [
         SystemMessage(content="""
             You are a SQL expert tasked with converting natural language questions into SQL queries.
@@ -225,20 +235,30 @@ def text_to_sql_from_schema(query: str = "", schema: dict = {}) -> str:
         """)
     ]
 
-    response = llm.invoke(messages)
-    print("text_to_sql_from_schema response: ", response)
+    print("executing text_to_sql_from_schema")
+    content_accumulator = []
 
-    return response.content.strip()
+    async for chunk in llm.astream(messages):
+        print(chunk)
+
+        if token_stream_callback:
+            await token_stream_callback(chunk.content)
+        if chunk.content:
+            content_accumulator.append(chunk.content)
+    
+    full_content = "".join(content_accumulator)
+    print("text_to_sql_from_schema full_content: ", full_content)
+    return full_content.strip()
 
 
-def generate_questions_from_schema(query: str = "", schema: dict = {}) -> list:
+async def generate_questions_from_schema(query: str = "", schema: dict = {}, token_stream_callback=None) -> list:
     """
     Inner function that generates a list of similar analytical questions.
     
     Args:
         query (str): The main question to generate similar questions for
         schema (dict): The schema of the dataset that is being analysed
-        
+        token_stream_callback (callable): Optional callback for streaming tokens
     Returns:
         list: A list of similar questions
     """
@@ -282,61 +302,80 @@ def generate_questions_from_schema(query: str = "", schema: dict = {}) -> list:
         """)
     ]
 
-    response = llm.invoke(messages)
-    print("generate_questions_from_schema response: ", response)
+    # response = llm.invoke(messages)
+    print("executing generate_questions_from_schema")
+    content_accumulator = []
+
+    async for chunk in llm.astream(messages):
+        print(chunk)
+
+        if token_stream_callback:
+            await token_stream_callback(chunk.content)
+        if chunk.content:
+            content_accumulator.append(chunk.content)
+    
+    full_content = "".join(content_accumulator)
 
     try:
         # Parse the JSON string into a list of questions
-        questions = json.loads(response.content.strip())
+        questions = json.loads(full_content.strip())
         return questions
     except json.JSONDecodeError as e:
         print(f"Error parsing JSON response: {e}")
         return []
 
 
-@tool(args_schema=TextToSqlInput)
-def text_to_sql(
-    query: str
-    # state: Annotated[AgentState, InjectedState],  # TODO: bring these back but need to pass in state and config into the tool call
-    # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
-) -> str:
-    """Generates sql from a main query."""
-    return text_to_sql_from_schema(query, transactions_schema)
+def create_text_to_sql_tool(token_stream_callback=None):
+    @tool(args_schema=TextToSqlInput)
+    def text_to_sql(
+        query: str
+        # state: Annotated[AgentState, InjectedState],  # TODO: bring these back but need to pass in state and config into the tool call
+        # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
+    ) -> str:
+        """Generates sql from a main query."""
+        return asyncio.run(text_to_sql_from_schema(query, transactions_schema, token_stream_callback))  # TODO: pass in transactions_schema
+    return text_to_sql
 
 
-@tool(args_schema=GenerateAnalyticalQuestionsInput)
-def generate_analytical_questions(
-    query: str,
-    # state: Annotated[AgentState, InjectedState],  # TODO: bring these back but need to pass in state and config into the tool call
-    # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
-) -> list:
-    """Generates related analytical questions for a main query."""
-    return generate_questions_from_schema(query, transactions_schema)
+def create_generate_analytical_questions_tool(token_stream_callback=None):
+    @tool(args_schema=GenerateAnalyticalQuestionsInput)
+    def generate_analytical_questions(
+        query: str,
+        # state: Annotated[AgentState, InjectedState],  # TODO: bring these back but need to pass in state and config into the tool call
+        # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
+    ) -> list:
+        """Generates related analytical questions for a main query."""
+        return asyncio.run(generate_questions_from_schema(query, transactions_schema, token_stream_callback))  # TODO: pass in transactions_schema
+    return generate_analytical_questions
+
 
 
 # Define tools list
-tools = [
-    Tool(
-        name="multiply",
-        func=multiply,
-        description="Multiplies two integers together. Input must be a string containing two numbers, like '4,3' or '4 * 3'. Parameter name is 'input'."
-    ),
-    Tool(
-        name="run_sql",
-        func=run_sql,
-        description="Executes SQL queries against a PostgreSQL database. Returns results as a list of tuples."
-    ),
-    Tool(
-        name='text_to_sql',
-        func=text_to_sql,
-        description="Converts natural language questions into SQL queries. Takes a question as input and returns a valid SQL query that will answer the question."
-    ),
-    Tool(
-        name='generate_analytical_questions',
-        func=generate_analytical_questions,
-        description="Generates a list of similar analytical questions that could help answer the main question. Takes a question as input and returns a list of related questions that explore different aspects of the main question."
-    )
-]
+def define_tools(token_stream_callback=None):
+    tools = [
+        Tool(
+            name="multiply",
+            func=multiply,
+            description="Multiplies two integers together. Input must be a string containing two numbers, like '4,3' or '4 * 3'. Parameter name is 'input'."
+        ),
+        Tool(
+            name="run_sql",
+            func=run_sql,
+            description="Executes SQL queries against a PostgreSQL database. Returns results as a list of tuples."
+        ),
+        Tool(
+            name='text_to_sql',
+            func=create_text_to_sql_tool(token_stream_callback),
+            description="Converts natural language questions into SQL queries. Takes a question as input and returns a valid SQL query that will answer the question."
+        ),
+        Tool(
+            name='generate_analytical_questions',
+            func=create_generate_analytical_questions_tool(token_stream_callback),
+            description="Generates a list of similar analytical questions that could help answer the main question. Takes a question as input and returns a list of related questions that explore different aspects of the main question."
+        )
+    ]
+    
+    return tools
 
 # TODO: create chart tool
 
