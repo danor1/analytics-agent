@@ -217,6 +217,7 @@ async def text_to_sql_from_schema(local_llm, schema, query: str = "", token_stre
         full_content = "".join(content_accumulator).strip()
 
         # --- Add LIMIT 50 if not present ---
+        # TODO: do this if not present and/or a higher limit has been inadvertently set
         generated_sql = full_content.rstrip(';')
         if not re.search(r'\\blimit\\b\\s*\\d+', generated_sql, re.IGNORECASE):
             generated_sql += " LIMIT 50"
