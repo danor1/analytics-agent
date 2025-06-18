@@ -274,7 +274,11 @@ async def stream_graph_updates(graph, user_input: str):
 
 
 async def main():
-    graph = build_graph()
+    # Only import schema when running locally
+    from config.database import transactions_schema
+    # TODO: split main.py into a main and local file for running agent from cli
+
+    graph = build_graph(schema=transactions_schema)
     while True:
         user_input = input("User: ")
         if user_input.lower() in ["quit", "exit", "q"]:
