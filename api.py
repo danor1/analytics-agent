@@ -1,3 +1,4 @@
+import re
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,12 +63,13 @@ async def chat(req: ChatRequest):
         queue = asyncio.Queue()
 
         async def token_callback(token: str):
-            if token == '\n':
-                await queue.put('[NEWLINE]')
-            elif token == '\n\n':
-                await queue.put('[DOUBLENEWLINE]')
-            else:
-                await queue.put(token)
+            for part in re.split(r'(\n\n|\n)', token):
+                if part == '\n':
+                    await queue.put('[NEWLINE]')
+                elif part == '\n\n':
+                    await queue.put('[DOUBLENEWLINE]')
+                elif part:
+                    await queue.put(part)
         
         graph = build_graph(token_callback)
 
@@ -86,15 +88,18 @@ async def chat(req: ChatRequest):
 
         while True:
             token = await queue.get()
-            # Send the token as-is, including newlines
-            if token == '\n':
-                yield f"data: [NEWLINE]\n\n"
-            elif token == '\n\n':
-                yield f"data: [DOUBLENEWLINE]\n\n"
-            else:
-                yield f"data: {token}\n\n"
-            if token == "[DONE]":
+            
+            if token == '[DONE]':
+                yield f"data: [DONE]\n\n"
                 break
+
+            for part in re.split(r'(\n\n|\n)', token):
+                if part == '\n':
+                    yield f"data: [NEWLINE]\n\n"
+                elif part == '\n\n':
+                    yield f"data: [DOUBLENEWLINE]\n\n"
+                elif part:
+                    yield f"data: {part}\n\n"
     
     return StreamingResponse(token_streamer(), media_type="text/event-stream")
 
