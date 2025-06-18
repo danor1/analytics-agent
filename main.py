@@ -282,6 +282,7 @@ async def main():
     payload = {
         "organization_id": "",  # TODO: this may need to be filled for local agent to run sql successfully
         "connection_id": "",  # TODO: this may need to be filled for local agent to run sql successfully
+        'tenant_jwt': "",
         "schema": transactions_schema
     }
 
