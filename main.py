@@ -219,11 +219,12 @@ def custom_tools_condition(state: State) -> str:
     return 'end'
 
 # --- Build Graph function ---
-def build_graph(token_stream_callback=None, schema={}):
+# TODO: type payload
+def build_graph(payload, token_stream_callback=None):
     graph_builder = StateGraph(State)
 
     # Define tools and attach to llm
-    tools = define_tools(token_stream_callback, schema)
+    tools = define_tools(payload, token_stream_callback)
     llm_with_tools = llm.bind_tools(tools)
 
 
@@ -278,7 +279,13 @@ async def main():
     from config.database import transactions_schema
     # TODO: split main.py into a main and local file for running agent from cli
 
-    graph = build_graph(schema=transactions_schema)
+    payload = {
+        "organization_id": "",  # TODO: this may need to be filled for local agent to run sql successfully
+        "connection_id": "",  # TODO: this may need to be filled for local agent to run sql successfully
+        "schema": transactions_schema
+    }
+
+    graph = build_graph(payload=payload)
     while True:
         user_input = input("User: ")
         if user_input.lower() in ["quit", "exit", "q"]:

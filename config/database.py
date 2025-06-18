@@ -2,6 +2,7 @@
 Database configuration and schema definitions.
 """
 
+# TODO: convert to a pydantic model
 transactions_schema = {
     'public.users': {
         'columns': ['id', 'email', 'password_hash', 'full_name', 'role', 'created_at'],

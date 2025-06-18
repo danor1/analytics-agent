@@ -3,19 +3,20 @@ import re
 import math
 import json
 import asyncio
-from typing import Annotated, Optional, Callable
+import requests
+from typing import Annotated, Optional, Callable, List
 from pydantic import BaseModel
 from langchain_core.tools import tool, Tool
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
-# from langgraph.graph import AsyncTool
 from langgraph.prebuilt import InjectedState
 from langgraph.prebuilt.chat_agent_executor import AgentState
-# from langchain_openai import ChatOpenAI
 from langchain.chat_models import init_chat_model
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2 import pool
+
+from utils.utility import extract_tables
 
 
 load_dotenv()
@@ -30,7 +31,7 @@ class TextToSqlInput(BaseModel):
 
 
 class RunSqlInput(BaseModel):
-    query: str
+    sql_query: str
 
 
 class GenerateAnalyticalQuestionsInput(BaseModel):
@@ -57,15 +58,57 @@ def multiply(input: str) -> int:
     return math.prod(numbers[:2])
 
 
-@tool(args_schema=RunSqlInput)
-def run_sql(query: str = "") -> list:
+def run_sql_execute(sql_query: str, payload) -> list:
     """
-    Executes a SQL query against the PostgreSQL database.
+    Inner function that executes a SQL query against a provided db
     Returns the query results as a list of tuples.
     
     Args:
-        query (str): The SQL query to execute
+        sql_query (str): The SQL query to execute
     """
+    print("run_sql_execute payload: ", payload)
+
+    # TODO: change over this function to use the api request, add in hostoverride, raw table name extraction, and a local dev version that hits our transactions pg db
+    sql_payload = {
+        "sqlQuery": sql_query,
+        "connectionId": payload.connection_id,
+        "filters": [],
+        "rawTableNames": extract_tables(sql_query),
+        "requestingOrganization": payload.organization_id,
+        "tz": 0
+    }
+
+    api_base = "http://localhost:5001" if os.environ.get("ENV") == "development" else "https://api.upsolve.ai"
+    api_route = f"{api_base}/v1/api/client-database/run-sql"
+
+    try:
+        response = requests.post(
+            api_route,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f"Bearer {payload.tenant_jwt}"
+            },
+            json=sql_payload
+            )
+
+        results = response.json()
+    except Exception as e:
+        print(f"Error: {e}")
+        return None
+    finally:
+        return results
+
+
+def run_sql_execute_local(sql_query: str, payload) -> list:
+    """
+    Inner function that executes a SQL query against the transactions postgres db
+    Returns the query results as a list of tuples.
+    
+    Args:
+        sql_query (str): The SQL query to execute
+    """
+    print("run_sql_execute_local payload: ", payload)
+
     try:
         connection_pool = pool.SimpleConnectionPool(
             1,
@@ -80,7 +123,7 @@ def run_sql(query: str = "") -> list:
         conn = connection_pool.getconn()
         cursor = conn.cursor()
 
-        cursor.execute(query)
+        cursor.execute(sql_query)
         results = cursor.fetchall()
         print("run_sql results: ", results)
 
@@ -95,7 +138,7 @@ def run_sql(query: str = "") -> list:
         return results
 
 
-async def text_to_sql_from_schema(local_llm, query: str = "", schema: dict = {}, token_stream_callback=None) -> str:
+async def text_to_sql_from_schema(local_llm, schema, query: str = "", token_stream_callback=None) -> str:
     """
     Inner function that generates a SQL query based on the input text description.
     
@@ -182,7 +225,7 @@ async def text_to_sql_from_schema(local_llm, query: str = "", schema: dict = {},
         raise
 
 
-async def generate_questions_from_schema(local_llm, query: str = "", schema: dict = {}, token_stream_callback=None) -> list:
+async def generate_questions_from_schema(local_llm, schema, query: str = "", token_stream_callback=None) -> list:
     """
     Inner function that generates a list of similar analytical questions.
     
@@ -260,7 +303,22 @@ async def generate_questions_from_schema(local_llm, query: str = "", schema: dic
         raise
 
 
-def create_text_to_sql_tool(token_stream_callback=None, schema={}):
+def create_run_sql_tool(payload, token_stream_callback=None):
+    @tool(args_schema=RunSqlInput)
+    def run_sql(
+        sql_query: str
+        # state: Annotated[AgentState, InjectedState],  # TODO: bring these back but need to pass in state and config into the tool call
+        # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
+    ) -> str:
+        """Runs provided sql query"""
+        if token_stream_callback:
+            return run_sql_execute(sql_query, payload)
+        
+        return run_sql_execute_local(sql_query, payload)
+    return run_sql
+
+
+def create_text_to_sql_tool(schema, token_stream_callback=None):
     @tool(args_schema=TextToSqlInput)
     def text_to_sql(
         query: str
@@ -274,11 +332,11 @@ def create_text_to_sql_tool(token_stream_callback=None, schema={}):
             api_key=os.environ["OPENAI_API_KEY"],
             streaming=True
         )
-        return asyncio.run(text_to_sql_from_schema(local_llm, query, schema, token_stream_callback))
+        return asyncio.run(text_to_sql_from_schema(local_llm, schema, query, token_stream_callback))
     return text_to_sql
 
 
-def create_generate_analytical_questions_tool(token_stream_callback=None, schema={}):
+def create_generate_analytical_questions_tool(schema, token_stream_callback=None):
     @tool(args_schema=GenerateAnalyticalQuestionsInput)
     def generate_analytical_questions(
         query: str,
@@ -292,13 +350,16 @@ def create_generate_analytical_questions_tool(token_stream_callback=None, schema
             api_key=os.environ["OPENAI_API_KEY"],
             streaming=True
         )
-        return asyncio.run(generate_questions_from_schema(local_llm, query, schema, token_stream_callback))
+        return asyncio.run(generate_questions_from_schema(local_llm, schema, query, token_stream_callback))
     return generate_analytical_questions
 
 
 
 # Define tools list
-def define_tools(token_stream_callback=None, schema={}):
+def define_tools(payload, token_stream_callback=None):
+    # Access schema directly from the Pydantic model
+    schema = payload.schema
+
     tools = [
         Tool(
             name="multiply",
@@ -307,17 +368,17 @@ def define_tools(token_stream_callback=None, schema={}):
         ),
         Tool(
             name="run_sql",
-            func=run_sql,
-            description="Executes SQL queries against a PostgreSQL database. Returns results as a list of tuples."
+            func=create_run_sql_tool(payload, token_stream_callback),
+            description="Executes SQL queries against a provided database. Returns results as a list of tuples."
         ),
         Tool(
             name='text_to_sql',
-            func=create_text_to_sql_tool(token_stream_callback, schema),
+            func=create_text_to_sql_tool(schema, token_stream_callback),
             description="Converts natural language questions into SQL queries. Takes a question as input and returns a valid SQL query that will answer the question."
         ),
         Tool(
             name='generate_analytical_questions',
-            func=create_generate_analytical_questions_tool(token_stream_callback, schema),
+            func=create_generate_analytical_questions_tool(schema, token_stream_callback),
             description="Generates a list of similar analytical questions that could help answer the main question. Takes a question as input and returns a list of related questions that explore different aspects of the main question."
         )
     ]
@@ -331,3 +392,4 @@ def define_tools(token_stream_callback=None, schema={}):
 # generate sql for "spend by category"
 # generate analytical questions to "who spent the most"
 # generate sql for "spend by category" and execute it
+# execute the sql "select * from transactions limit 2"

@@ -58,15 +58,23 @@ class SchemaType(BaseModel):
     columns: list[str]
     types: dict[str, str]
 
-class ChatRequest(BaseModel):
-    input: str
+class ConnectionPayload(BaseModel):
+    organization_id: str
+    connection_id: str
+    tenant_jwt: str
     schema: dict[str, SchemaType]
 
-# TODO: bring schema into the chat request body
+class ChatRequest(BaseModel):
+    input: str
+    payload: ConnectionPayload
+
+# TODO: organization_id will eventually be passed through an auth middleware
 @app.post("/chat")
 async def chat(req: ChatRequest):
     async def token_streamer():
-        if not req.input or not req.schema:
+        print("req: ", req)
+        if not req.payload.organization_id or not req.payload.connection_id or not req.payload.tenant_jwt or not req.payload.schema:
+            raise HTTPException(status_code=400, message="Missing required payload fields")
             return
         
         queue = asyncio.Queue()
@@ -80,7 +88,7 @@ async def chat(req: ChatRequest):
                 elif part:
                     await queue.put(part)
         
-        graph = build_graph(token_callback, req.schema)
+        graph = build_graph(req.payload, token_callback)
 
         initial_state = {
             "messages": [
