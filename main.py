@@ -202,22 +202,6 @@ def make_end_node(token_stream_callback=None):
     
     return end_node
 
-# temporary - to remove
-# async def tool_executor(state: State):
-#     print("[tool_executor] Entered tool node")
-#     tool_calls = state.get("tool_calls", [])
-#     results = []
-#     for call in tool_calls:
-#         print(f"[tool_executor] Attempting to call tool: {call.name} with args: {call.args}")
-#         for tool in tools:
-#             if tool.name == call.name:
-#                 try:
-#                     output = await tool.ainvoke(call.args) if hasattr(tool, "ainvoke") else tool.invoke(call.args)
-#                     print(f"[tool_executor] Tool '{call.name}' returned: {output}")
-#                     results.append(ToolMessage(tool_call_id=call.id, content=str(output)))
-#                 except Exception as e:
-#                     print(f"[tool_executor] Error in tool '{call.name}': {e}")
-#     return {"messages": results}
 
 def custom_tools_condition(state: State) -> str:
     last_msg = state["messages"][-1]
@@ -235,11 +219,11 @@ def custom_tools_condition(state: State) -> str:
     return 'end'
 
 # --- Build Graph function ---
-def build_graph(token_stream_callback=None):
+def build_graph(token_stream_callback=None, schema={}):
     graph_builder = StateGraph(State)
 
     # Define tools and attach to llm
-    tools = define_tools(token_stream_callback)
+    tools = define_tools(token_stream_callback, schema)
     llm_with_tools = llm.bind_tools(tools)
 
 

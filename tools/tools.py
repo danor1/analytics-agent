@@ -20,89 +20,6 @@ from psycopg2 import pool
 
 load_dotenv()
 
-# TODO: move to a config file
-transactions_schema = {
-    "transactions": {
-        "columns": [
-            "purchase_date",
-            "posted_date", 
-            "payment_date",
-            "exported_date",
-            "exported_datetime",
-            "amount",
-            "currency",
-            "original_amount",
-            "original_currency", 
-            "usd_equivalent_amount",
-            "expense_status",
-            "payment_status",
-            "budget_or_limit",
-            "parent_budget",
-            "policy",
-            "user",
-            "department",
-            "location",
-            "cost_center",
-            "merchant_name",
-            "category",
-            "memo",
-            "type",
-            "current_review_assignees",
-            "review_assigned_datetime",
-            "final_approval_datetime",
-            "final_approver",
-            "final_copilot_approver",
-            "id",
-            "country_of_expense"
-        ],
-        "types": {
-            "purchase_date": "date",
-            "posted_date": "string",
-            "payment_date": "string", 
-            "exported_date": "string",
-            "exported_datetime": "string",
-            "amount": "number",
-            "currency": "string",
-            "original_amount": "number",
-            "original_currency": "string",
-            "usd_equivalent_amount": "number",
-            "expense_status": "string",
-            "payment_status": "string",
-            "budget_or_limit": "string",
-            "parent_budget": "string",
-            "policy": "string",
-            "user": "string",
-            "department": "string",
-            "location": "string",
-            "cost_center": "string",
-            "merchant_name": "string",
-            "category": "string",
-            "memo": "string",
-            "type": "string",
-            "current_review_assignees": "string",
-            "review_assigned_datetime": "string",
-            "final_approval_datetime": "string",
-            "final_approver": "string",
-            "final_copilot_approver": "string",
-            "id": "string",
-            "country_of_expense": "string"
-        }
-    }
-}
-
-
-# llm = ChatOpenAI(
-#     model="gpt-4-turbo-preview",
-#     temperature=0,
-#     api_key=os.environ["OPENAI_API_KEY"]
-# )
-# llm = init_chat_model(
-#     model="gpt-4-turbo",
-#     temperature=0,
-#     api_key=os.environ["OPENAI_API_KEY"],
-#     streaming=True
-# )
-
 
 class MultiplyInput(BaseModel):
     input: str
@@ -343,7 +260,7 @@ async def generate_questions_from_schema(local_llm, query: str = "", schema: dic
         raise
 
 
-def create_text_to_sql_tool(token_stream_callback=None):
+def create_text_to_sql_tool(token_stream_callback=None, schema={}):
     @tool(args_schema=TextToSqlInput)
     def text_to_sql(
         query: str
@@ -357,11 +274,11 @@ def create_text_to_sql_tool(token_stream_callback=None):
             api_key=os.environ["OPENAI_API_KEY"],
             streaming=True
         )
-        return asyncio.run(text_to_sql_from_schema(local_llm, query, transactions_schema, token_stream_callback))  # TODO: pass in transactions_schema
+        return asyncio.run(text_to_sql_from_schema(local_llm, query, schema, token_stream_callback))
     return text_to_sql
 
 
-def create_generate_analytical_questions_tool(token_stream_callback=None):
+def create_generate_analytical_questions_tool(token_stream_callback=None, schema={}):
     @tool(args_schema=GenerateAnalyticalQuestionsInput)
     def generate_analytical_questions(
         query: str,
@@ -375,13 +292,13 @@ def create_generate_analytical_questions_tool(token_stream_callback=None):
             api_key=os.environ["OPENAI_API_KEY"],
             streaming=True
         )
-        return asyncio.run(generate_questions_from_schema(local_llm, query, transactions_schema, token_stream_callback))  # TODO: pass in transactions_schema
+        return asyncio.run(generate_questions_from_schema(local_llm, query, schema, token_stream_callback))
     return generate_analytical_questions
 
 
 
 # Define tools list
-def define_tools(token_stream_callback=None):
+def define_tools(token_stream_callback=None, schema={}):
     tools = [
         Tool(
             name="multiply",
@@ -395,12 +312,12 @@ def define_tools(token_stream_callback=None):
         ),
         Tool(
             name='text_to_sql',
-            func=create_text_to_sql_tool(token_stream_callback),
+            func=create_text_to_sql_tool(token_stream_callback, schema),
             description="Converts natural language questions into SQL queries. Takes a question as input and returns a valid SQL query that will answer the question."
         ),
         Tool(
             name='generate_analytical_questions',
-            func=create_generate_analytical_questions_tool(token_stream_callback),
+            func=create_generate_analytical_questions_tool(token_stream_callback, schema),
             description="Generates a list of similar analytical questions that could help answer the main question. Takes a question as input and returns a list of related questions that explore different aspects of the main question."
         )
     ]

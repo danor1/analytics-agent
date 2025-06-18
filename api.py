@@ -54,12 +54,22 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+class SchemaType(BaseModel):
+    columns: list[str]
+    types: dict[str, str]
+
 class ChatRequest(BaseModel):
     input: str
+    schema: dict[str, SchemaType]
 
+# TODO: bring schema into the chat request body
 @app.post("/chat")
 async def chat(req: ChatRequest):
     async def token_streamer():
+        if not req.schema:
+            print("missing req.schema")
+            return
+        
         queue = asyncio.Queue()
 
         async def token_callback(token: str):
@@ -71,7 +81,7 @@ async def chat(req: ChatRequest):
                 elif part:
                     await queue.put(part)
         
-        graph = build_graph(token_callback)
+        graph = build_graph(token_callback, req.schema)
 
         initial_state = {
             "messages": [
