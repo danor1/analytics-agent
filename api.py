@@ -66,8 +66,7 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 async def chat(req: ChatRequest):
     async def token_streamer():
-        if not req.schema:
-            print("missing req.schema")
+        if not req.input or not req.schema:
             return
         
         queue = asyncio.Queue()
