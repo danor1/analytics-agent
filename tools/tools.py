@@ -96,12 +96,12 @@ transactions_schema = {
 #     temperature=0,
 #     api_key=os.environ["OPENAI_API_KEY"]
 # )
-llm = init_chat_model(
-    model="gpt-4-turbo",
-    temperature=0,
-    api_key=os.environ["OPENAI_API_KEY"],
-    streaming=True
-)
+# llm = init_chat_model(
+#     model="gpt-4-turbo",
+#     temperature=0,
+#     api_key=os.environ["OPENAI_API_KEY"],
+#     streaming=True
+# )
 
 
 class MultiplyInput(BaseModel):
@@ -178,7 +178,7 @@ def run_sql(query: str = "") -> list:
         return results
 
 
-async def text_to_sql_from_schema(query: str = "", schema: dict = {}, token_stream_callback=None) -> str:
+async def text_to_sql_from_schema(local_llm, query: str = "", schema: dict = {}, token_stream_callback=None) -> str:
     """
     Inner function that generates a SQL query based on the input text description.
     
@@ -217,11 +217,12 @@ async def text_to_sql_from_schema(query: str = "", schema: dict = {}, token_stre
                 - For bar charts, ensure categorical data is properly grouped
                 - For donut charts, ensure the data is properly aggregated for the segments
 
-            Your response must be ONLY a valid SQL query that:
-            - Directly answers the given question
-            - Uses only tables and columns from the provided schema
-            - Is properly formatted and readable
-            - Includes appropriate comments explaining complex parts
+            CRITICAL: Your response must be ONLY the SQL query, with no additional text, explanations, or formatting.
+            DO NOT include any of the following in your response:
+            - SQL: prefix
+            - ```sql markers
+            - Explanations or comments
+            - Any other text before or after the query
         """),
         HumanMessage(content=f"""
             Question: {query}
@@ -238,20 +239,33 @@ async def text_to_sql_from_schema(query: str = "", schema: dict = {}, token_stre
     print("executing text_to_sql_from_schema")
     content_accumulator = []
 
-    async for chunk in llm.astream(messages):
-        print(chunk)
+    try:
+        if token_stream_callback:
+            await token_stream_callback("[CODE_START]")
+
+        async for chunk in local_llm.astream(messages):
+            print(chunk)
+
+            if chunk.content and token_stream_callback:
+                await token_stream_callback(chunk.content)
+            if chunk.content:
+                content_accumulator.append(chunk.content)
+        
+        full_content = "".join(content_accumulator)
 
         if token_stream_callback:
-            await token_stream_callback(chunk.content)
-        if chunk.content:
-            content_accumulator.append(chunk.content)
-    
-    full_content = "".join(content_accumulator)
-    print("text_to_sql_from_schema full_content: ", full_content)
-    return full_content.strip()
+            await token_stream_callback("[CODE_END]")
+        
+        print("text_to_sql_from_schema full_content: ", full_content)
+        return full_content.strip()
+    except Exception as e:
+        print(f"Error in text_to_sql_from_schema: {e}")
+        if token_stream_callback:
+            await token_stream_callback("[CODE_END]")
+        raise
 
 
-async def generate_questions_from_schema(query: str = "", schema: dict = {}, token_stream_callback=None) -> list:
+async def generate_questions_from_schema(local_llm, query: str = "", schema: dict = {}, token_stream_callback=None) -> list:
     """
     Inner function that generates a list of similar analytical questions.
     
@@ -306,23 +320,27 @@ async def generate_questions_from_schema(query: str = "", schema: dict = {}, tok
     print("executing generate_questions_from_schema")
     content_accumulator = []
 
-    async for chunk in llm.astream(messages):
-        print(chunk)
-
-        if token_stream_callback:
-            await token_stream_callback(chunk.content)
-        if chunk.content:
-            content_accumulator.append(chunk.content)
-    
-    full_content = "".join(content_accumulator)
-
     try:
-        # Parse the JSON string into a list of questions
-        questions = json.loads(full_content.strip())
-        return questions
-    except json.JSONDecodeError as e:
-        print(f"Error parsing JSON response: {e}")
-        return []
+        async for chunk in local_llm.astream(messages):
+            print(chunk)
+
+            if chunk.content and token_stream_callback:
+                await token_stream_callback(chunk.content)
+            if chunk.content:
+                content_accumulator.append(chunk.content)
+        
+        full_content = "".join(content_accumulator)
+
+        try:
+            # Parse the JSON string into a list of questions
+            questions = json.loads(full_content.strip())
+            return questions
+        except json.JSONDecodeError as e:
+            print(f"Error parsing JSON response: {e}")
+            return []
+    except Exception as e:
+        print(f"Error in generate_questions_from_schema: {e}")
+        raise
 
 
 def create_text_to_sql_tool(token_stream_callback=None):
@@ -333,7 +351,13 @@ def create_text_to_sql_tool(token_stream_callback=None):
         # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
     ) -> str:
         """Generates sql from a main query."""
-        return asyncio.run(text_to_sql_from_schema(query, transactions_schema, token_stream_callback))  # TODO: pass in transactions_schema
+        local_llm = init_chat_model(
+            model="gpt-4-turbo",
+            temperature=0,
+            api_key=os.environ["OPENAI_API_KEY"],
+            streaming=True
+        )
+        return asyncio.run(text_to_sql_from_schema(local_llm, query, transactions_schema, token_stream_callback))  # TODO: pass in transactions_schema
     return text_to_sql
 
 
@@ -345,7 +369,13 @@ def create_generate_analytical_questions_tool(token_stream_callback=None):
         # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
     ) -> list:
         """Generates related analytical questions for a main query."""
-        return asyncio.run(generate_questions_from_schema(query, transactions_schema, token_stream_callback))  # TODO: pass in transactions_schema
+        local_llm = init_chat_model(
+            model="gpt-4-turbo",
+            temperature=0,
+            api_key=os.environ["OPENAI_API_KEY"],
+            streaming=True
+        )
+        return asyncio.run(generate_questions_from_schema(local_llm, query, transactions_schema, token_stream_callback))  # TODO: pass in transactions_schema
     return generate_analytical_questions
 
 
