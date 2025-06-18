@@ -77,6 +77,7 @@ def run_sql_execute(sql_query: str, payload) -> list:
         "requestingOrganization": payload.organization_id,
         "tz": 0
     }
+    print("sql_payload: ", sql_payload)
 
     api_base = "http://localhost:5001" if os.environ.get("ENV") == "development" else "https://api.upsolve.ai"
     api_route = f"{api_base}/v1/api/client-database/run-sql"
@@ -176,6 +177,8 @@ async def text_to_sql_from_schema(local_llm, schema, query: str = "", token_stre
                 - For line charts, ensure time-based data is properly ordered
                 - For bar charts, ensure categorical data is properly grouped
                 - For donut charts, ensure the data is properly aggregated for the segments
+            13. Add a LIMIT clause where appropriate (for example, if a long list of rows is expected in the response). If you do not add a LIMIT, a LIMIT 50 should be appended.
+            14. When appropriate, add an ORDER BY clause (e.g., ORDER BY id DESC or ORDER BY created_at DESC) if such columns exist in the selected table(s).
 
             CRITICAL: Your response must be ONLY the SQL query, with no additional text, explanations, or formatting.
             DO NOT include any of the following in your response:
@@ -211,13 +214,19 @@ async def text_to_sql_from_schema(local_llm, schema, query: str = "", token_stre
             if chunk.content:
                 content_accumulator.append(chunk.content)
         
-        full_content = "".join(content_accumulator)
+        full_content = "".join(content_accumulator).strip()
+
+        # --- Add LIMIT 50 if not present ---
+        generated_sql = full_content.rstrip(';')
+        if not re.search(r'\\blimit\\b\\s*\\d+', generated_sql, re.IGNORECASE):
+            generated_sql += " LIMIT 50"
+        generated_sql += ";"
 
         if token_stream_callback:
             await token_stream_callback("[CODE_END]")
         
-        print("text_to_sql_from_schema full_content: ", full_content)
-        return full_content.strip()
+        print("text_to_sql_from_schema generated_sql: ", generated_sql)
+        return generated_sql
     except Exception as e:
         print(f"Error in text_to_sql_from_schema: {e}")
         if token_stream_callback:
@@ -393,3 +402,4 @@ def define_tools(payload, token_stream_callback=None):
 # generate analytical questions to "who spent the most"
 # generate sql for "spend by category" and execute it
 # execute the sql "select * from transactions limit 2"
+# generate sql for products sold by location and execute it
