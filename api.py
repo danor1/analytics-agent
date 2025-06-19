@@ -1,5 +1,5 @@
 import re
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage
@@ -42,6 +42,8 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+api_v1_router = APIRouter(prefix="/v1/api")
+
 class SchemaType(BaseModel):
     columns: list[str]
     types: dict[str, str]
@@ -57,7 +59,7 @@ class ChatRequest(BaseModel):
     payload: ConnectionPayload
 
 # TODO: organization_id will eventually be passed through an auth middleware
-@app.post("/chat")
+@api_v1_router.post("/chat")
 async def chat(req: ChatRequest):
     async def token_streamer():
         print("req: ", req)
@@ -109,8 +111,9 @@ async def chat(req: ChatRequest):
     return StreamingResponse(token_streamer(), media_type="text/event-stream")
 
 
+# Mount the v1 API router
+app.include_router(api_v1_router)
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000) 
-
-# can be tested with
-# curl -N -X POST "http://0.0.0.0:8000/chat" -H "Content-Type: application/json" -d '{"input": "What kind of bear is best?"}' 
