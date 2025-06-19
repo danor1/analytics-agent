@@ -4,7 +4,7 @@ import math
 import json
 import asyncio
 import requests
-from typing import Annotated, Optional, Callable, List
+from typing import Annotated, Optional, Callable, List, Any
 from pydantic import BaseModel
 from langchain_core.tools import tool, Tool
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -36,6 +36,13 @@ class RunSqlInput(BaseModel):
 
 class GenerateAnalyticalQuestionsInput(BaseModel):
     query: str
+
+
+class AnalyseDataInput(BaseModel):
+    status: str
+    data: dict  # Accepts any dict, including 'message' and 'queryResult' keys
+    # queryResult is a list of dicts with arbitrary key-value pairs
+    # Example: {'message': str, 'queryResult': list[dict[str, Any]]}
 
 
 # TODO: move the functions that the tools call away after bringing state and config in
@@ -93,6 +100,7 @@ def run_sql_execute(sql_query: str, payload) -> list:
             )
 
         results = response.json()
+        print("run_sql_execute results: ", results)
     except Exception as e:
         print(f"Error: {e}")
         return None
@@ -200,6 +208,12 @@ async def text_to_sql_from_schema(local_llm, schema, query: str = "", token_stre
     ]
 
     print("executing text_to_sql_from_schema")
+
+    if token_stream_callback:
+        await token_stream_callback("\n\n")
+        # await token_stream_callback("[TEXT_TO_SQL_TOOL]")  # For testing
+        # await token_stream_callback("\n\n")  # For testing
+
     content_accumulator = []
 
     try:
@@ -235,7 +249,7 @@ async def text_to_sql_from_schema(local_llm, schema, query: str = "", token_stre
         raise
 
 
-async def generate_questions_from_schema(local_llm, schema, query: str = "", token_stream_callback=None) -> list:
+async def generate_questions_from_schema(local_llm, schema, query: str = "", token_stream_callback=None, stream=True) -> list:
     """
     Inner function that generates a list of similar analytical questions.
     
@@ -243,6 +257,7 @@ async def generate_questions_from_schema(local_llm, schema, query: str = "", tok
         query (str): The main question to generate similar questions for
         schema (dict): The schema of the dataset that is being analysed
         token_stream_callback (callable): Optional callback for streaming tokens
+        stream (bool): Whether to stream the response or not
     Returns:
         list: A list of similar questions
     """
@@ -286,8 +301,70 @@ async def generate_questions_from_schema(local_llm, schema, query: str = "", tok
         """)
     ]
 
-    # response = llm.invoke(messages)
     print("executing generate_questions_from_schema")
+
+    if token_stream_callback:
+        await token_stream_callback("\n\n")
+        # await token_stream_callback("[GENERATE_ANALYTICAL_QUESTIONS_TOOL]")  # For testing
+        # await token_stream_callback("\n\n")  # For testing
+    
+    try:
+        match stream:
+            case True:
+                # Use streaming if stream=True
+                content_accumulator = []
+                async for chunk in local_llm.astream(messages):
+                    print(chunk)
+                    if chunk.content and token_stream_callback:
+                        await token_stream_callback(chunk.content)
+                    if chunk.content:
+                        content_accumulator.append(chunk.content)
+                full_content = "".join(content_accumulator)
+            case False:
+                # Use non-streaming if stream=False
+                response = await local_llm.ainvoke(messages)
+                full_content = response.content
+
+        try:
+            # Parse the JSON string into a list of questions
+            questions = json.loads(full_content.strip())
+            # Limit to exactly 3 questions
+            return questions[:3]
+        except json.JSONDecodeError as e:
+            print(f"Error parsing JSON response: {e}")
+            return []
+    except Exception as e:
+        print(f"Error in generate_questions_from_schema: {e}")
+        raise
+
+
+async def analyse_data(local_llm, status: str, data: dict, token_stream_callback=None) -> str:
+    """
+    Uses an LLM to analyze and summarize the results of a SQL query in markdown format.
+    """
+    # Compose the prompt
+    messages = [
+        SystemMessage(content="""
+            You are a data analyst. Given a status and a set of raw query results (as a list of dicts), analyze the data and provide a clear, concise summary in markdown format.
+            - Highlight key findings, trends, and outliers.
+            - Use bullet points, code blocks, and headings as appropriate.
+            - If the data is empty, say so.
+            - Do not use table formatting (|), use code blocks or bullet points for structured data.
+            - Be as insightful as possible.
+        """),
+        HumanMessage(content=f"""
+            Status: {status}
+            Data: {json.dumps(data, indent=2)}
+        """)
+    ]
+
+    print("executing analyse_data")
+
+    if token_stream_callback:
+        await token_stream_callback("\n\n")
+        # await token_stream_callback("[ANALYSE_DATA_TOOL]")  # For testing
+        # await token_stream_callback("\n\n")  # For testing
+
     content_accumulator = []
 
     try:
@@ -301,15 +378,10 @@ async def generate_questions_from_schema(local_llm, schema, query: str = "", tok
         
         full_content = "".join(content_accumulator)
 
-        try:
-            # Parse the JSON string into a list of questions
-            questions = json.loads(full_content.strip())
-            return questions
-        except json.JSONDecodeError as e:
-            print(f"Error parsing JSON response: {e}")
-            return []
+        print("analyse_data full_content: ", full_content)
+        return full_content
     except Exception as e:
-        print(f"Error in generate_questions_from_schema: {e}")
+        print(f"Error in analyse_data: {e}")
         raise
 
 
@@ -322,6 +394,9 @@ def create_run_sql_tool(payload, token_stream_callback=None):
     ) -> str:
         """Runs provided sql query"""
         if token_stream_callback:
+            token_stream_callback("\n\n")
+            # token_stream_callback("[RUN_SQL_TOOL]")  # For testing
+            # token_stream_callback("\n\n")  # For testing
             return run_sql_execute(sql_query, payload)
         
         return run_sql_execute_local(sql_query, payload)
@@ -346,7 +421,7 @@ def create_text_to_sql_tool(schema, token_stream_callback=None):
     return text_to_sql
 
 
-def create_generate_analytical_questions_tool(schema, token_stream_callback=None):
+def create_generate_analytical_questions_tool(schema, token_stream_callback=None, stream=True):
     @tool(args_schema=GenerateAnalyticalQuestionsInput)
     def generate_analytical_questions(
         query: str,
@@ -358,11 +433,30 @@ def create_generate_analytical_questions_tool(schema, token_stream_callback=None
             model="gpt-4-turbo",
             temperature=0,
             api_key=os.environ["OPENAI_API_KEY"],
-            streaming=True
+            streaming=stream
         )
-        return asyncio.run(generate_questions_from_schema(local_llm, schema, query, token_stream_callback))
+        print("stream: ", stream)
+        return asyncio.run(generate_questions_from_schema(local_llm, schema, query, token_stream_callback, stream))
     return generate_analytical_questions
 
+
+def create_analyse_data_tool(token_stream_callback=None):
+    @tool(args_schema=AnalyseDataInput)
+    def analyse_data_tool(
+        status: str,
+        data: dict,
+        # state: Annotated[AgentState, InjectedState],  # TODO: bring these back but need to pass in state and config into the tool call
+        # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
+    ) -> str:
+        """Takes raw data, analyses raw data for insigts, returns results in markdown format """
+        local_llm = init_chat_model(
+            model="gpt-4-turbo",
+            temperature=0,
+            api_key=os.environ["OPENAI_API_KEY"],
+            streaming=True
+        )
+        return asyncio.run(analyse_data(local_llm, status, data, token_stream_callback))
+    return analyse_data_tool
 
 
 # Define tools list
@@ -388,15 +482,20 @@ def define_tools(payload, token_stream_callback=None):
         ),
         Tool(
             name='generate_analytical_questions',
-            func=create_generate_analytical_questions_tool(schema, token_stream_callback),
+            func=create_generate_analytical_questions_tool(schema, token_stream_callback, stream=False),
             description="Generates a list of similar analytical questions that could help answer the main question. Takes a question as input and returns a list of related questions that explore different aspects of the main question."
-        )
+        ),
+         # TODO: analyse_data tool doesnt seem to be used
+        Tool(
+            name='analyse_data',
+            func=create_analyse_data_tool(token_stream_callback),
+            description="Analyses raw data returned from the run_sql tool. Returns results in markdown format"
+        ),
     ]
     
     return tools
 
 # TODO: create chart tool
-
 
 # run the following sql "select * from transactions limit 1"
 # generate sql for "spend by category"
