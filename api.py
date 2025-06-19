@@ -8,16 +8,7 @@ import asyncio
 import uvicorn
 from main import build_graph
 
-# When given a user question:
-# 1. Generate a list of analytical sub-questions that would help answer the main question.
-# 2. For each sub-question:
-#     a. Generate a SQL query to answer it.
-#     b. Execute the SQL query.
-#     c. Analyze the returned data.
-# 3. Summarize your findings in clear markdown, using bullet points and code blocks for data.
 
-
-# TODO: bring local SYSTEM_MESSAGE in alignment and bring back table formatting
 # System message to guide the LLM
 SYSTEM_MESSAGE = """You are a helpful AI data analyst.
 

@@ -23,6 +23,8 @@ from tools.tools import define_tools
 
 
 load_dotenv()
+
+
 llm = init_chat_model(
     model="gpt-4-turbo",
     temperature=0,
@@ -32,38 +34,27 @@ llm = init_chat_model(
 
 
 # System message to guide the LLM
-SYSTEM_MESSAGE = """You are a helpful AI assistant that can use tools to accomplish tasks.
-When given a task that requires multiple steps:
-1. Break down the task into steps
-2. Use the appropriate tools in sequence
-3. After each tool call, analyze the result and determine if more steps are needed
-4. Continue until the task is complete
-5. Provide a clear final response summarizing the results in valid markdown format
+SYSTEM_MESSAGE = """You are a helpful AI data analyst.
 
-For example, if asked to "generate SQL for spend by user and run it":
-1. First use text_to_sql to generate the SQL query
-2. Then use run_sql to execute the generated query
-3. Finally, present the results in a clear format using markdown
+When given a user question:
+0. Start by explaining your analysis approach in exactly 1 sentence (how you plan to break down and answer the question). Do not mention SQL or technical details.
+1. Generate exactly 3 analytical sub-questions that would help answer the main question using the generate_analytical_questions tool.
+2. Process each sub-question one at a time (in series, not parallel):
+    a. Generate a SQL query to answer it using the text_to_sql tool.
+    b. Execute the SQL query using the run_sql tool.
+    c. Analyze the returned data using the analyse_data tool.
+    d. Move to the next sub-question only after completing the previous one.
+3. Summarize your findings in clear markdown, using bullet points and code blocks for data.
 
-Always format your final response using markdown:
-- Use # for main headings
-- Use ## for subheadings
-- Use ``` for code blocks with appropriate language specification
-- Use - or * for bullet points
-- Use ** for bold text
-- Use * for italic text
-- Use > for blockquotes
-- Use | for tables
-- Use [text](url) for links
-
-Important formatting rules:
-- Always add two newlines after headings
-- Always add one newline after paragraphs
-- Always add one newline after list items
-- Always add one newline before and after code blocks
-- Always add one newline before and after tables
-- Always add one newline before and after blockquotes
-- Use double newlines to create clear section breaks"""
+Rules:
+- Use only the provided schema.
+- Always show your reasoning and steps.
+- Never use table formatting (|), use bullet points or code blocks for structured data.
+- Add LIMIT 50 to SQL queries if not present.
+- Use the analyse_data tool to get insights from SQL results before summarizing.
+- Process exactly 3 questions, one at a time.
+- Always end each response with a newline or double newline for proper formatting.
+"""
 
 # --- Define Graph State ----
 class State(TypedDict):
