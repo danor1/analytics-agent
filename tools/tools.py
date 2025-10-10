@@ -4,13 +4,10 @@ import math
 import json
 import asyncio
 import requests
-from typing import Annotated, Optional, Callable, List, Any
+from typing import Optional, Callable, List, Any
 from pydantic import BaseModel
 from langchain_core.tools import tool, Tool
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_core.runnables import RunnableConfig
-from langgraph.prebuilt import InjectedState
-from langgraph.prebuilt.chat_agent_executor import AgentState
 from langchain.chat_models import init_chat_model
 from dotenv import load_dotenv
 import psycopg2
@@ -387,16 +384,10 @@ async def analyse_data(local_llm, status: str, data: dict, token_stream_callback
 
 def create_run_sql_tool(payload, token_stream_callback=None):
     @tool(args_schema=RunSqlInput)
-    def run_sql(
-        sql_query: str
-        # state: Annotated[AgentState, InjectedState],  # TODO: bring these back but need to pass in state and config into the tool call
-        # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
-    ) -> str:
+    def run_sql(sql_query: str) -> str:
         """Runs provided sql query"""
         if token_stream_callback:
             token_stream_callback("\n\n")
-            # token_stream_callback("[RUN_SQL_TOOL]")  # For testing
-            # token_stream_callback("\n\n")  # For testing
             return run_sql_execute(sql_query, payload)
         
         return run_sql_execute_local(sql_query, payload)
@@ -405,11 +396,7 @@ def create_run_sql_tool(payload, token_stream_callback=None):
 
 def create_text_to_sql_tool(schema, token_stream_callback=None):
     @tool(args_schema=TextToSqlInput)
-    def text_to_sql(
-        query: str
-        # state: Annotated[AgentState, InjectedState],  # TODO: bring these back but need to pass in state and config into the tool call
-        # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
-    ) -> str:
+    def text_to_sql(query: str) -> str:
         """Generates sql from a main query."""
         local_llm = init_chat_model(
             model="gpt-4-turbo",
@@ -423,11 +410,7 @@ def create_text_to_sql_tool(schema, token_stream_callback=None):
 
 def create_generate_analytical_questions_tool(schema, token_stream_callback=None, stream=True):
     @tool(args_schema=GenerateAnalyticalQuestionsInput)
-    def generate_analytical_questions(
-        query: str,
-        # state: Annotated[AgentState, InjectedState],  # TODO: bring these back but need to pass in state and config into the tool call
-        # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
-    ) -> list:
+    def generate_analytical_questions(query: str) -> list:
         """Generates related analytical questions for a main query."""
         local_llm = init_chat_model(
             model="gpt-4-turbo",
@@ -442,12 +425,7 @@ def create_generate_analytical_questions_tool(schema, token_stream_callback=None
 
 def create_analyse_data_tool(token_stream_callback=None):
     @tool(args_schema=AnalyseDataInput)
-    def analyse_data_tool(
-        status: str,
-        data: dict,
-        # state: Annotated[AgentState, InjectedState],  # TODO: bring these back but need to pass in state and config into the tool call
-        # config: RunnableConfig  # TODO: bring these back but need to pass in state and config into the tool call
-    ) -> str:
+    def analyse_data_tool(status: str, data: dict) -> str:
         """Takes raw data, analyses raw data for insigts, returns results in markdown format """
         local_llm = init_chat_model(
             model="gpt-4-turbo",

@@ -2,11 +2,10 @@ import re
 from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 import asyncio
 import uvicorn
-from main import build_graph
+from main import run_agent_loop
 
 
 # System message to guide the LLM
@@ -64,7 +63,7 @@ async def chat(req: ChatRequest):
     async def token_streamer():
         print("req: ", req)
         if not req.payload.organization_id or not req.payload.connection_id or not req.payload.tenant_jwt or not req.payload.schema:
-            raise HTTPException(status_code=400, message="Missing required payload fields")
+            raise HTTPException(status_code=400, detail="Missing required payload fields")
             return
         
         queue = asyncio.Queue()
@@ -78,20 +77,11 @@ async def chat(req: ChatRequest):
                 elif part:
                     await queue.put(part)
         
-        graph = build_graph(req.payload, token_callback)
+        # Run the agent loop
+        async def run_agent():
+            await run_agent_loop(req.payload, req.input, token_callback)
 
-        initial_state = {
-            "messages": [
-                {"role": "system", "content": SYSTEM_MESSAGE},
-                {"role": "user", "content": req.input}
-            ]
-        }
-
-        async def run_graph():
-            async for _ in graph.astream(initial_state):
-                pass
-
-        asyncio.create_task(run_graph())
+        asyncio.create_task(run_agent())
 
         while True:
             token = await queue.get()
