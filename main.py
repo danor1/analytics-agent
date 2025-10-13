@@ -23,23 +23,20 @@ llm = init_chat_model(
 SYSTEM_MESSAGE = """You are a helpful AI data analyst.
 
 When given a user question:
-0. Start by explaining your analysis approach in exactly 1 sentence (how you plan to break down and answer the question). Do not mention SQL or technical details.
-1. Generate exactly 3 analytical sub-questions that would help answer the main question using the generate_analytical_questions tool.
-2. Process each sub-question one at a time (in series, not parallel):
-    a. Generate a SQL query to answer it using the text_to_sql tool.
-    b. Execute the SQL query using the run_sql tool.
-    c. Analyze the returned data using the analyse_data tool.
-    d. Move to the next sub-question only after completing the previous one.
-3. Summarize your findings in clear markdown, using bullet points and code blocks for data.
+1. Break down the question into logical analytical steps
+2. For each step:
+    a. Generate a SQL query using the text_to_sql tool
+    b. Execute the SQL query using the run_sql tool
+    c. Analyze the returned data using the analyse_data tool
+3. Summarize your findings in clear markdown, using bullet points and code blocks for data
 
 Rules:
-- Use only the provided schema.
-- Always show your reasoning and steps.
-- Never use table formatting (|), use bullet points or code blocks for structured data.
-- Add LIMIT 50 to SQL queries if not present.
-- Use the analyse_data tool to get insights from SQL results before summarizing.
-- Process exactly 3 questions, one at a time.
-- Always end each response with a newline or double newline for proper formatting.
+- Use only the provided schema
+- Always show your reasoning and steps
+- Never use table formatting (|), use bullet points or code blocks for structured data
+- SQL queries are automatically limited to 50 rows
+- Use the analyse_data tool to get insights from SQL results before summarizing
+- Always end each response with a newline or double newline for proper formatting
 """
 
 # --- Simple State Management ---
@@ -125,6 +122,10 @@ async def call_llm_with_streaming(llm_with_tools, messages, token_stream_callbac
     print("tool_calls_accumulator: ", tool_calls_accumulator)
     print("aggregated: ", aggregated)
     
+    # Log the final full response
+    if full_content:
+        print(f"\n=== FULL STREAMED RESPONSE ===\n{full_content}\n=== END RESPONSE ===\n")
+    
     return full_content, aggregated
 
 
@@ -133,13 +134,10 @@ async def execute_tool(tool_name: str, tool_args: Dict[str, Any], tools_dict: Di
     if tool_name not in tools_dict:
         return f"Error: Tool '{tool_name}' not found"
     
-    tool_func = tools_dict[tool_name]
+    tool = tools_dict[tool_name]
     try:
-        # Call the tool function with the parsed arguments
-        result = tool_func(**tool_args)
-        # Handle async tool functions
-        if asyncio.iscoroutine(result):
-            result = await result
+        # Call the tool using ainvoke for async support
+        result = await tool.ainvoke(tool_args)
         return str(result)
     except Exception as e:
         print(f"Error executing tool {tool_name}: {e}")
@@ -151,8 +149,8 @@ async def run_agent_loop(payload, user_input: str, token_stream_callback=None):
     # Define tools
     tools = define_tools(payload, token_stream_callback)
     
-    # Create a dict mapping tool names to their functions
-    tools_dict = {tool.name: tool.func for tool in tools}
+    # Create a dict mapping tool names to their callable tools
+    tools_dict = {tool.name: tool for tool in tools}
     
     # Bind tools to LLM
     llm_with_tools = llm.bind_tools(tools)
@@ -202,6 +200,7 @@ async def run_agent_loop(payload, user_input: str, token_stream_callback=None):
         # If no tool calls, we're done
         if not tool_calls:
             print("\nNo tool calls - agent finished")
+            print(f"\n=== FINAL AGENT RESPONSE ===\n{content}\n=== END FINAL RESPONSE ===\n")
             break
         
         # Execute each tool call
@@ -245,18 +244,43 @@ async def stream_agent_updates(payload, user_input: str):
     print()
 
 
+def load_database_from_json(db_path: str = "config/database.json") -> dict:
+    """Load database schema and data from JSON file."""
+    try:
+        with open(db_path, 'r') as f:
+            db = json.load(f)
+            # Return just the schema for agent use
+            return db.get("schema", {})
+    except FileNotFoundError:
+        print(f"Database file not found at {db_path}")
+        # Fallback to minimal schema
+        return {
+            "public.transactions": {
+                "columns": ["id", "purchase_date", "amount", "merchant_name", "category", "user", "department"],
+                "types": {
+                    "id": "string",
+                    "purchase_date": "date",
+                    "amount": "number",
+                    "merchant_name": "string",
+                    "category": "string",
+                    "user": "string",
+                    "department": "string"
+                }
+            }
+        }
+
+
 async def main():
     """CLI interface for the agent."""
-    # Only import schema when running locally
-    from config.database import transactions_schema
+    # Load schema from database JSON file
+    schema = load_database_from_json()
+    
+    # Create a simple namespace object to hold the schema
+    from types import SimpleNamespace
+    payload = SimpleNamespace(schema=schema)
 
-    payload = {
-        "organization_id": "",
-        "connection_id": "",
-        'tenant_jwt': "",
-        "schema": transactions_schema
-    }
-
+    print("Agent ready! Type 'quit', 'exit', or 'q' to stop.\n")
+    
     while True:
         user_input = input("User: ")
         if user_input.lower() in ["quit", "exit", "q"]:

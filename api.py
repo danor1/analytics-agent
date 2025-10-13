@@ -12,23 +12,20 @@ from main import run_agent_loop
 SYSTEM_MESSAGE = """You are a helpful AI data analyst.
 
 When given a user question:
-0. Start by explaining your analysis approach in exactly 1 sentence (how you plan to break down and answer the question). Do not mention SQL or technical details.
-1. Generate exactly 3 analytical sub-questions that would help answer the main question using the generate_analytical_questions tool.
-2. Process each sub-question one at a time (in series, not parallel):
-    a. Generate a SQL query to answer it using the text_to_sql tool.
-    b. Execute the SQL query using the run_sql tool.
-    c. Analyze the returned data using the analyse_data tool.
-    d. Move to the next sub-question only after completing the previous one.
-3. Summarize your findings in clear markdown, using bullet points and code blocks for data.
+1. Break down the question into logical analytical steps
+2. For each step:
+    a. Generate a SQL query using the text_to_sql tool
+    b. Execute the SQL query using the run_sql tool
+    c. Analyze the returned data using the analyse_data tool
+3. Summarize your findings in clear markdown, using bullet points and code blocks for data
 
 Rules:
-- Use only the provided schema.
-- Always show your reasoning and steps.
-- Never use table formatting (|), use bullet points or code blocks for structured data.
-- Add LIMIT 50 to SQL queries if not present.
-- Use the analyse_data tool to get insights from SQL results before summarizing.
-- Process exactly 3 questions, one at a time.
-- Always end each response with a newline or double newline for proper formatting.
+- Use only the provided schema
+- Always show your reasoning and steps
+- Never use table formatting (|), use bullet points or code blocks for structured data
+- SQL queries are automatically limited to 50 rows
+- Use the analyse_data tool to get insights from SQL results before summarizing
+- Always end each response with a newline or double newline for proper formatting
 """
 
 app = FastAPI(title="Agent API")
@@ -47,23 +44,19 @@ class SchemaType(BaseModel):
     columns: list[str]
     types: dict[str, str]
 
-class ConnectionPayload(BaseModel):
-    organization_id: str
-    connection_id: str
-    tenant_jwt: str
+class AgentPayload(BaseModel):
     schema: dict[str, SchemaType]
 
 class ChatRequest(BaseModel):
     input: str
-    payload: ConnectionPayload
+    payload: AgentPayload
 
-# TODO: organization_id will eventually be passed through an auth middleware
 @api_v1_router.post("/chat")
 async def chat(req: ChatRequest):
     async def token_streamer():
         print("req: ", req)
-        if not req.payload.organization_id or not req.payload.connection_id or not req.payload.tenant_jwt or not req.payload.schema:
-            raise HTTPException(status_code=400, detail="Missing required payload fields")
+        if not req.payload.schema:
+            raise HTTPException(status_code=400, detail="Missing schema in payload")
             return
         
         queue = asyncio.Queue()
