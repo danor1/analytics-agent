@@ -4,15 +4,17 @@ A lightweight, framework-free AI agent that converts natural language questions 
 
 ## Features
 
-- **No Heavy Frameworks**: Built without LangGraph - simple, clean Python code
+- **No Heavy Frameworks**: Built without any framework - simple, clean Python code with async/await
 - **Natural Language to SQL**: Converts questions into SQL queries using GPT-4
 - **Direct Query Analysis**: Breaks down questions into logical analytical steps
 - **Streaming Responses**: Real-time token-level streaming for immediate feedback
-- **In-Memory Data**: Executes queries against 10 sample rows in JSON (no database needed!)
+- **Async Tool Execution**: Proper async/await support for efficient tool execution
+- **In-Memory Data**: Executes queries against sample rows in JSON (no database needed!)
 - **Schema + Data in JSON**: Single file contains both schema and sample data
 - **Optional PostgreSQL**: Can connect to real database if credentials are provided
 - **FastAPI REST API**: Streaming endpoint for web integration
 - **CLI Interface**: Interactive command-line interface for local testing
+- **Debug Logging**: Full response logging to track agent reasoning and outputs
 
 ## Setup
 
@@ -69,20 +71,52 @@ You can:
 
 ## How It Works
 
-1. Receives a natural language question
-2. Breaks down the question into logical analytical steps
-3. For each step:
-   - Converts question to SQL using GPT-4
-   - Executes query against in-memory data (or real DB if configured)
-   - Analyzes results using GPT-4
-4. Provides comprehensive summary in markdown format
+1. **User Input**: Receives a natural language question
+2. **Agent Loop**: Iterates until task is complete (max 20 iterations)
+3. **For Each Iteration**:
+   - LLM determines next action and calls appropriate tools
+   - **text_to_sql**: Converts natural language to SQL query
+   - **run_sql**: Executes query against in-memory data (or real DB if configured)
+   - **analyse_data**: Analyzes results and provides insights
+4. **Streaming Output**: Real-time token streaming with full response logging
+5. **Final Response**: Comprehensive summary in markdown format
+
+### Tool Execution Flow
+
+```
+User Question → LLM (with tools) → Tool Calls → Execute Tools → Results → LLM → Final Answer
+                      ↑                                                         |
+                      |_________________________________________________________|
+                                    (Loop until complete)
+```
+
+All tools use async/await for efficient execution within the running event loop.
 
 ## Architecture
 
-- `main.py` - Core agent loop and CLI
-- `api.py` - FastAPI REST API
-- `tools/tools.py` - Tool definitions (text_to_sql, run_sql, etc.)
-- `config/` - Schema definitions
-- `utils/` - Helper utilities
+- `main.py` - Core async agent loop and CLI interface
+- `api.py` - FastAPI REST API with streaming support
+- `tools/tools.py` - Async tool definitions (text_to_sql, run_sql, analyse_data)
+- `config/database.json` - Schema and sample data
+- `utils/` - Helper utilities (rendering, data extraction)
 
-No LangGraph, no complex dependencies - just simple, maintainable code.
+### Key Components
+
+**Agent Loop (`run_agent_loop`)**:
+- Manages conversation history and message state
+- Streams LLM responses in real-time
+- Executes tools asynchronously using `ainvoke()`
+- Logs full responses for debugging
+
+**Tools**:
+- `text_to_sql` - Async LLM call to generate SQL from natural language
+- `run_sql` - Executes SQL against in-memory data or PostgreSQL
+- `analyse_data` - Async LLM call to analyze and summarize results
+- `multiply` - Example tool for demonstration
+
+**Streaming**:
+- Token-level streaming from LLM
+- Tool output streaming via callbacks
+- Final response logging
+
+No LangGraph, no complex dependencies - just simple, maintainable async Python code.
