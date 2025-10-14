@@ -100,17 +100,15 @@ def aggregate_tool_calls(tool_calls_accumulator):
 
 
 
-async def call_llm_with_streaming(llm_with_tools, messages, token_stream_callback=None):
+async def call_llm_with_streaming(llm_with_tools, messages, stream_callback=None):
     """Call LLM and stream response, returning content and tool calls."""
     content_accumulator = []
     tool_calls_accumulator = []
 
     # Streaming LLM output
     async for chunk in llm_with_tools.astream(messages):
-        print(chunk)
-
-        if token_stream_callback and chunk.content:
-            await token_stream_callback(chunk.content)
+        if stream_callback and chunk.content:
+            await stream_callback(chunk.content)
         if chunk.content:
             content_accumulator.append(chunk.content)
         if "tool_calls" in chunk.additional_kwargs:
@@ -118,13 +116,6 @@ async def call_llm_with_streaming(llm_with_tools, messages, token_stream_callbac
     
     full_content = "".join(content_accumulator)
     aggregated = aggregate_tool_calls(tool_calls_accumulator)
-    
-    print("tool_calls_accumulator: ", tool_calls_accumulator)
-    print("aggregated: ", aggregated)
-    
-    # Log the final full response
-    if full_content:
-        print(f"\n=== FULL STREAMED RESPONSE ===\n{full_content}\n=== END RESPONSE ===\n")
     
     return full_content, aggregated
 
@@ -144,10 +135,10 @@ async def execute_tool(tool_name: str, tool_args: Dict[str, Any], tools_dict: Di
         return f"Error: {str(e)}"
 
 
-async def run_agent_loop(payload, user_input: str, token_stream_callback=None):
+async def run_agent_loop(payload, user_input: str, stream_callback=None):
     """Main agent loop - no framework, just simple iteration."""
     # Define tools
-    tools = define_tools(payload, token_stream_callback)
+    tools = define_tools(payload, stream_callback)
     
     # Create a dict mapping tool names to their callable tools
     tools_dict = {tool.name: tool for tool in tools}
@@ -164,13 +155,11 @@ async def run_agent_loop(payload, user_input: str, token_stream_callback=None):
     # Agent loop - continue until no more tool calls
     max_iterations = 20  # Safety limit
     for iteration in range(max_iterations):
-        print(f"\n--- Iteration {iteration + 1} ---")
-        
         # Call LLM
         content, tool_calls = await call_llm_with_streaming(
             llm_with_tools, 
             messages, 
-            token_stream_callback
+            stream_callback
         )
         
         # Add assistant message to history
@@ -199,8 +188,6 @@ async def run_agent_loop(payload, user_input: str, token_stream_callback=None):
         
         # If no tool calls, we're done
         if not tool_calls:
-            print("\nNo tool calls - agent finished")
-            print(f"\n=== FINAL AGENT RESPONSE ===\n{content}\n=== END FINAL RESPONSE ===\n")
             break
         
         # Execute each tool call
@@ -212,12 +199,8 @@ async def run_agent_loop(payload, user_input: str, token_stream_callback=None):
                 print(f"Error parsing tool arguments: {e}")
                 tool_args = {}
             
-            print(f"\nExecuting tool: {tool_name} with args: {tool_args}")
-            
             # Execute the tool
             result = await execute_tool(tool_name, tool_args, tools_dict)
-            
-            print(f"Tool result: {result}")
             
             # Add tool result to messages
             messages.append({
@@ -228,8 +211,8 @@ async def run_agent_loop(payload, user_input: str, token_stream_callback=None):
             })
     
     # Send done signal
-    if token_stream_callback:
-        await token_stream_callback("[DONE]")
+    if stream_callback:
+        await stream_callback("[DONE]")
     
     return messages
 
@@ -239,9 +222,13 @@ async def stream_agent_updates(payload, user_input: str):
     """Stream agent responses to console."""
     print("Assistant: ", end="", flush=True)
     
-    await run_agent_loop(payload, user_input)
+    # Create a simple callback that prints inline
+    async def inline_stream_callback(content):
+        print(content, end="", flush=True)
     
-    print()
+    await run_agent_loop(payload, user_input, inline_stream_callback)
+    
+    print("\n")
 
 
 def load_database_from_json(db_path: str = "config/database.json") -> dict:

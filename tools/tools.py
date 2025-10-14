@@ -49,12 +49,10 @@ def multiply(input: str) -> int:
     - "2 3"
     - "multiply 2 and 3"
     """
-    print("executing multiply")
     numbers = list(map(int, re.findall(r"\d+", input)))
     if len(numbers) < 2:
         raise ValueError("Please provide at least 2 numbers to multiply")
     
-    print("math.prod(numbers[:2]): ", math.prod(numbers[:2]))
     return math.prod(numbers[:2])
 
 
@@ -66,8 +64,6 @@ def run_sql_execute(sql_query: str, payload) -> dict:
     Args:
         sql_query (str): The SQL query to execute
     """
-    print("run_sql_execute - In-memory execution")
-    print("SQL Query:", sql_query)
     
     try:
         # Load data from database.json
@@ -114,7 +110,6 @@ def run_sql_execute(sql_query: str, payload) -> dict:
         }
         
     except Exception as e:
-        print(f"Error in run_sql_execute: {e}")
         return {
             "status": "error",
             "message": str(e),
@@ -131,12 +126,10 @@ def run_sql_execute_local(sql_query: str, payload) -> dict:
     Args:
         sql_query (str): The SQL query to execute
     """
-    print("run_sql_execute_local")
     
     # Check if database credentials are available
     db_credentials = ["DB_USER", "DB_PASSWORD", "DB_HOST", "DB_NAME", "DB_PORT"]
     if not all(os.environ.get(key) for key in db_credentials):
-        print("Database credentials not found, using mock execution")
         return run_sql_execute(sql_query, payload)
 
     try:
@@ -155,7 +148,6 @@ def run_sql_execute_local(sql_query: str, payload) -> dict:
 
         cursor.execute(sql_query)
         results = cursor.fetchall()
-        print("run_sql results: ", results)
 
         cursor.close()
         connection_pool.putconn(conn)
@@ -170,7 +162,6 @@ def run_sql_execute_local(sql_query: str, payload) -> dict:
             "sql": sql_query
         }
     except Exception as e:
-        print(f"Error: {e}")
         return {
             "status": "error",
             "message": str(e),
@@ -179,14 +170,14 @@ def run_sql_execute_local(sql_query: str, payload) -> dict:
         }
 
 
-async def text_to_sql_from_schema(local_llm, schema, query: str = "", token_stream_callback=None) -> str:
+async def text_to_sql_from_schema(local_llm, schema, query: str = "", stream_callback=None) -> str:
     """
     Inner function that generates a SQL query based on the input text description.
     
     Args:
         query (str): Natural language description of the desired SQL query
         schema (dict): The schema to use for generating the SQL query
-        token_stream_callback (callable): Optional callback for streaming tokens
+        stream_callback (callable): Optional callback for streaming tokens
     """
     messages = [
         SystemMessage(content="""
@@ -239,28 +230,10 @@ async def text_to_sql_from_schema(local_llm, schema, query: str = "", token_stre
         """)
     ]
 
-    print("executing text_to_sql_from_schema")
-
-    if token_stream_callback:
-        await token_stream_callback("\n\n")
-        # await token_stream_callback("[TEXT_TO_SQL_TOOL]")  # For testing
-        # await token_stream_callback("\n\n")  # For testing
-
-    content_accumulator = []
-
     try:
-        if token_stream_callback:
-            await token_stream_callback("[CODE_START]")
-
-        async for chunk in local_llm.astream(messages):
-            print(chunk)
-
-            if chunk.content and token_stream_callback:
-                await token_stream_callback(chunk.content)
-            if chunk.content:
-                content_accumulator.append(chunk.content)
-        
-        full_content = "".join(content_accumulator).strip()
+        # Generate SQL without streaming
+        response = await local_llm.ainvoke(messages)
+        full_content = response.content.strip()
 
         # --- Add LIMIT 50 if not present ---
         # TODO: do this if not present and/or a higher limit has been inadvertently set
@@ -268,20 +241,19 @@ async def text_to_sql_from_schema(local_llm, schema, query: str = "", token_stre
         if not re.search(r'\\blimit\\b\\s*\\d+', generated_sql, re.IGNORECASE):
             generated_sql += " LIMIT 50"
         generated_sql += ";"
-
-        if token_stream_callback:
-            await token_stream_callback("[CODE_END]")
         
-        print("text_to_sql_from_schema generated_sql: ", generated_sql)
+        # Output the generated SQL query
+        if stream_callback:
+            await stream_callback(f"\n\n```sql\n{generated_sql}\n```\n")
+        
         return generated_sql
     except Exception as e:
-        print(f"Error in text_to_sql_from_schema: {e}")
-        if token_stream_callback:
-            await token_stream_callback("[CODE_END]")
+        if stream_callback:
+            await stream_callback(f"\n\nError generating SQL: {str(e)}\n")
         raise
 
 
-async def analyse_data(local_llm, status: str, data: dict, token_stream_callback=None) -> str:
+async def analyse_data(local_llm, status: str, data: dict, stream_callback=None) -> str:
     """
     Uses an LLM to analyze and summarize the results of a SQL query in markdown format.
     """
@@ -301,34 +273,29 @@ async def analyse_data(local_llm, status: str, data: dict, token_stream_callback
         """)
     ]
 
-    print("executing analyse_data")
-
-    if token_stream_callback:
-        await token_stream_callback("\n\n")
-        # await token_stream_callback("[ANALYSE_DATA_TOOL]")  # For testing
-        # await token_stream_callback("\n\n")  # For testing
-
     content_accumulator = []
 
     try:
         async for chunk in local_llm.astream(messages):
-            print(chunk)
-
-            if chunk.content and token_stream_callback:
-                await token_stream_callback(chunk.content)
+            if chunk.content and stream_callback:
+                await stream_callback(chunk.content)
             if chunk.content:
                 content_accumulator.append(chunk.content)
         
         full_content = "".join(content_accumulator)
 
-        print("analyse_data full_content: ", full_content)
+        # Add newline at end of analysis
+        if stream_callback:
+            await stream_callback("\n")
+
         return full_content
     except Exception as e:
-        print(f"Error in analyse_data: {e}")
+        if stream_callback:
+            await stream_callback(f"\n\nError analyzing data: {str(e)}")
         raise
 
 
-def create_run_sql_tool(payload, token_stream_callback=None):
+def create_run_sql_tool(payload, stream_callback=None):
     @tool(args_schema=RunSqlInput)
     def run_sql(sql_query: str) -> str:
         """Runs provided sql query (or returns mock result if no database configured)"""
@@ -338,7 +305,7 @@ def create_run_sql_tool(payload, token_stream_callback=None):
     return run_sql
 
 
-def create_text_to_sql_tool(schema, token_stream_callback=None):
+def create_text_to_sql_tool(schema, stream_callback=None):
     @tool(args_schema=TextToSqlInput)
     async def text_to_sql(query: str) -> str:
         """Generates sql from a main query."""
@@ -348,11 +315,11 @@ def create_text_to_sql_tool(schema, token_stream_callback=None):
             api_key=os.environ["OPENAI_API_KEY"],
             streaming=True
         )
-        return await text_to_sql_from_schema(local_llm, schema, query, token_stream_callback)
+        return await text_to_sql_from_schema(local_llm, schema, query, stream_callback)
     return text_to_sql
 
 
-def create_analyse_data_tool(token_stream_callback=None):
+def create_analyse_data_tool(stream_callback=None):
     @tool(args_schema=AnalyseDataInput)
     async def analyse_data_tool(status: str, data: dict) -> str:
         """Takes raw data, analyses raw data for insigts, returns results in markdown format """
@@ -362,20 +329,20 @@ def create_analyse_data_tool(token_stream_callback=None):
             api_key=os.environ["OPENAI_API_KEY"],
             streaming=True
         )
-        return await analyse_data(local_llm, status, data, token_stream_callback)
+        return await analyse_data(local_llm, status, data, stream_callback)
     return analyse_data_tool
 
 
 # Define tools list
-def define_tools(payload, token_stream_callback=None):
+def define_tools(payload, stream_callback=None):
     # Access schema directly from the Pydantic model
     schema = payload.schema
 
     tools = [
         multiply,
-        create_run_sql_tool(payload, token_stream_callback),
-        create_text_to_sql_tool(schema, token_stream_callback),
-        create_analyse_data_tool(token_stream_callback),
+        create_run_sql_tool(payload, stream_callback),
+        create_text_to_sql_tool(schema, stream_callback),
+        create_analyse_data_tool(stream_callback),
     ]
     
     return tools
