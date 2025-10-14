@@ -12,9 +12,15 @@ from langchain.chat_models import init_chat_model
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2 import pool
+from paid import Paid, Signal
 
 from utils.utility import extract_tables
 
+# TODO: wed morning:
+# initialse paid client somewhere with token
+# add agent_id, customer_id, and send signal with signal_name using result = client.usage.record_bulk(signals=[signal])
+# hmm, there are a couple of ways to do this. we could manually send each signal when it comes up, or we could collect up all the signals from the
+# root part of the agent loop, and then send them all at once when the loop is done.
 
 load_dotenv()
 
