@@ -38,7 +38,6 @@ class AnalyseDataInput(BaseModel):
     # Example: {'message': str, 'queryResult': list[dict[str, Any]]}
 
 
-# TODO: move the functions that the tools call away after bringing state and config in
 # --- Define Tool ---
 @tool(args_schema=MultiplyInput)
 def multiply(input: str) -> int:
@@ -346,12 +345,3 @@ def define_tools(payload, stream_callback=None):
     ]
     
     return tools
-
-# TODO: create chart tool
-
-# run the following sql "select * from transactions limit 1"
-# generate sql for "spend by category"
-# generate analytical questions to "who spent the most"
-# generate sql for "spend by category" and execute it
-# execute the sql "select * from transactions limit 2"
-# generate sql for products sold by location and execute it
