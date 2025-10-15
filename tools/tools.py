@@ -12,7 +12,7 @@ from langchain.chat_models import init_chat_model
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2 import pool
-from paid import Paid, Signal
+from paid import Signal
 
 from utils.utility import extract_tables
 
@@ -61,7 +61,7 @@ def multiply(input: str) -> int:
     return math.prod(numbers[:2])
 
 
-def run_sql_execute(sql_query: str, payload) -> dict:
+def run_sql_execute(sql_query: str, payload, collect_signal_callback, agent_id, customer_id) -> dict:
     """
     Execute SQL query against in-memory data from database.json.
     This provides realistic results without needing a real database.
@@ -99,6 +99,14 @@ def run_sql_execute(sql_query: str, payload) -> dict:
                     limit = int(limit_match.group(1))
                     result_data = result_data[:limit]
                 
+                collect_signal_callback(
+                    Signal(
+                        event_name="run_sql_execute",
+                        agent_id=agent_id,
+                        customer_id=customer_id
+                    )
+                )
+                
                 return {
                     "status": "success",
                     "message": f"Query executed successfully on in-memory data",
@@ -106,13 +114,6 @@ def run_sql_execute(sql_query: str, payload) -> dict:
                     "sql": sql_query
                 }
         
-        # Fallback if table not found
-        return {
-            "status": "success",
-            "message": f"Query generated (no matching in-memory data)",
-            "queryResult": [],
-            "sql": sql_query
-        }
         
     except Exception as e:
         return {
@@ -123,7 +124,7 @@ def run_sql_execute(sql_query: str, payload) -> dict:
         }
 
 
-def run_sql_execute_local(sql_query: str, payload) -> dict:
+def run_sql_execute_local(sql_query: str, payload, collect_signal_callback, agent_id, customer_id) -> dict:
     """
     Execute SQL query against a local PostgreSQL database.
     This is optional - requires DB environment variables to be set.
@@ -135,7 +136,7 @@ def run_sql_execute_local(sql_query: str, payload) -> dict:
     # Check if database credentials are available
     db_credentials = ["DB_USER", "DB_PASSWORD", "DB_HOST", "DB_NAME", "DB_PORT"]
     if not all(os.environ.get(key) for key in db_credentials):
-        return run_sql_execute(sql_query, payload)
+        return run_sql_execute(sql_query, payload, collect_signal_callback, agent_id, customer_id)
 
     try:
         connection_pool = pool.SimpleConnectionPool(
@@ -160,6 +161,14 @@ def run_sql_execute_local(sql_query: str, payload) -> dict:
         if 'connection_pool' in locals():
             connection_pool.closeall()
         
+        collect_signal_callback(
+            Signal(
+                event_name="run_sql_execute",
+                agent_id=agent_id,
+                customer_id=customer_id
+            )
+        )
+        
         return {
             "status": "success",
             "message": "Query executed successfully",
@@ -175,7 +184,7 @@ def run_sql_execute_local(sql_query: str, payload) -> dict:
         }
 
 
-async def text_to_sql_from_schema(local_llm, schema, query: str = "", stream_callback=None) -> str:
+async def text_to_sql_from_schema(local_llm, schema, query, stream_callback, collect_signal_callback, agent_id, customer_id) -> str:
     """
     Inner function that generates a SQL query based on the input text description.
     
@@ -248,17 +257,23 @@ async def text_to_sql_from_schema(local_llm, schema, query: str = "", stream_cal
         generated_sql += ";"
         
         # Output the generated SQL query
-        if stream_callback:
-            await stream_callback(f"\n\n```sql\n{generated_sql}\n```\n")
+        await stream_callback(f"\n\n```sql\n{generated_sql}\n```\n")
+
+        collect_signal_callback(
+            Signal(
+                event_name="text_to_sql",
+                agent_id=agent_id,
+                customer_id=customer_id
+            )
+        )
         
         return generated_sql
     except Exception as e:
-        if stream_callback:
-            await stream_callback(f"\n\nError generating SQL: {str(e)}\n")
+        await stream_callback(f"\n\nError generating SQL: {str(e)}\n")
         raise
 
 
-async def analyse_data(local_llm, status: str, data: dict, stream_callback=None) -> str:
+async def analyse_data(local_llm, status: str, data: dict, stream_callback, collect_signal_callback, agent_id, customer_id) -> str:
     """
     Uses an LLM to analyze and summarize the results of a SQL query in markdown format.
     """
@@ -282,35 +297,40 @@ async def analyse_data(local_llm, status: str, data: dict, stream_callback=None)
 
     try:
         async for chunk in local_llm.astream(messages):
-            if chunk.content and stream_callback:
-                await stream_callback(chunk.content)
             if chunk.content:
+                await stream_callback(chunk.content)
                 content_accumulator.append(chunk.content)
         
         full_content = "".join(content_accumulator)
 
         # Add newline at end of analysis
-        if stream_callback:
-            await stream_callback("\n")
+        await stream_callback("\n")
 
+        collect_signal_callback(
+            Signal(
+                event_name="analyse_data",
+                agent_id=agent_id,
+                customer_id=customer_id
+            )
+        )
+        
         return full_content
     except Exception as e:
-        if stream_callback:
-            await stream_callback(f"\n\nError analyzing data: {str(e)}")
+        await stream_callback(f"\n\nError analyzing data: {str(e)}")
         raise
 
 
-def create_run_sql_tool(payload, stream_callback=None):
+def create_run_sql_tool(payload, stream_callback, collect_signal_callback, agent_id, customer_id):
     @tool(args_schema=RunSqlInput)
     def run_sql(sql_query: str) -> str:
         """Runs provided sql query (or returns mock result if no database configured)"""
         # Always use local execution which falls back to mock if no DB is configured
-        result = run_sql_execute_local(sql_query, payload)
+        result = run_sql_execute_local(sql_query, payload, collect_signal_callback, agent_id, customer_id)
         return json.dumps(result)
     return run_sql
 
 
-def create_text_to_sql_tool(schema, stream_callback=None):
+def create_text_to_sql_tool(schema, stream_callback, collect_signal_callback, agent_id, customer_id):
     @tool(args_schema=TextToSqlInput)
     async def text_to_sql(query: str) -> str:
         """Generates sql from a main query."""
@@ -320,11 +340,11 @@ def create_text_to_sql_tool(schema, stream_callback=None):
             api_key=os.environ["OPENAI_API_KEY"],
             streaming=True
         )
-        return await text_to_sql_from_schema(local_llm, schema, query, stream_callback)
+        return await text_to_sql_from_schema(local_llm, schema, query, stream_callback, collect_signal_callback, agent_id, customer_id)
     return text_to_sql
 
 
-def create_analyse_data_tool(stream_callback=None):
+def create_analyse_data_tool(stream_callback, collect_signal_callback, agent_id, customer_id):
     @tool(args_schema=AnalyseDataInput)
     async def analyse_data_tool(status: str, data: dict) -> str:
         """Takes raw data, analyses raw data for insigts, returns results in markdown format """
@@ -334,20 +354,20 @@ def create_analyse_data_tool(stream_callback=None):
             api_key=os.environ["OPENAI_API_KEY"],
             streaming=True
         )
-        return await analyse_data(local_llm, status, data, stream_callback)
+        return await analyse_data(local_llm, status, data, stream_callback, collect_signal_callback, agent_id, customer_id)
     return analyse_data_tool
 
 
 # Define tools list
-def define_tools(payload, stream_callback=None):
+def define_tools(payload, stream_callback, collect_signal_callback, agent_id, customer_id):
     # Access schema directly from the Pydantic model
     schema = payload.schema
 
     tools = [
         multiply,
-        create_run_sql_tool(payload, stream_callback),
-        create_text_to_sql_tool(schema, stream_callback),
-        create_analyse_data_tool(stream_callback),
+        create_run_sql_tool(payload, stream_callback, collect_signal_callback, agent_id, customer_id),
+        create_text_to_sql_tool(schema, stream_callback, collect_signal_callback, agent_id, customer_id),
+        create_analyse_data_tool(stream_callback, collect_signal_callback, agent_id, customer_id),
     ]
     
     return tools

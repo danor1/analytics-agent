@@ -1,11 +1,16 @@
 import re
+import os
 from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
 import uvicorn
+from dotenv import load_dotenv
+from paid import Paid
 from main import run_agent_loop
+
+load_dotenv()
 
 
 # System message to guide the LLM
@@ -29,6 +34,9 @@ Rules:
 """
 
 app = FastAPI(title="Agent API")
+
+# Initialize paid client
+paid_client = Paid(token=os.environ["PAIDAI_KEY"])
 
 app.add_middleware(
     CORSMiddleware,
@@ -72,7 +80,17 @@ async def chat(req: ChatRequest):
         
         # Run the agent loop
         async def run_agent():
-            await run_agent_loop(req.payload, req.input, token_callback)
+            signals = []
+            
+            def collect_signal_callback(signal_name):
+                signals.append(signal_name)
+            
+            await run_agent_loop(req.payload, req.input, token_callback, collect_signal_callback, "2d958cd9-ecff-4619-8523-8c986a9dbb1f", "0165cd09-66cb-4c4f-adba-0a5aeb171a4b")
+            
+            # Record signals in bulk
+            if signals:
+                result = paid_client.usage.record_bulk(signals=[signals])
+                print("API signals recorded: ", result)
 
         asyncio.create_task(run_agent())
 

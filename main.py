@@ -4,12 +4,17 @@ import asyncio
 from typing import Dict, List, Any, Optional
 from langchain.chat_models import init_chat_model
 from dotenv import load_dotenv
+from paid import Paid
 
 from tools.tools import define_tools
 
 
 load_dotenv()
 
+
+paid_client = Paid(token=os.environ["PAIDAI_KEY"])
+agent_id = "2d958cd9-ecff-4619-8523-8c986a9dbb1f"
+customer_id = "0165cd09-66cb-4c4f-adba-0a5aeb171a4b"
 
 llm = init_chat_model(
     model="gpt-4-turbo",
@@ -99,17 +104,15 @@ def aggregate_tool_calls(tool_calls_accumulator):
     return aggregated_calls
 
 
-
-async def call_llm_with_streaming(llm_with_tools, messages, stream_callback=None):
+async def call_llm_with_streaming(llm_with_tools, messages, stream_callback):
     """Call LLM and stream response, returning content and tool calls."""
     content_accumulator = []
     tool_calls_accumulator = []
 
     # Streaming LLM output
     async for chunk in llm_with_tools.astream(messages):
-        if stream_callback and chunk.content:
-            await stream_callback(chunk.content)
         if chunk.content:
+            await stream_callback(chunk.content)
             content_accumulator.append(chunk.content)
         if "tool_calls" in chunk.additional_kwargs:
             tool_calls_accumulator.extend(chunk.additional_kwargs["tool_calls"])
@@ -135,10 +138,10 @@ async def execute_tool(tool_name: str, tool_args: Dict[str, Any], tools_dict: Di
         return f"Error: {str(e)}"
 
 
-async def run_agent_loop(payload, user_input: str, stream_callback=None):
+async def run_agent_loop(payload, user_input: str, stream_callback, collect_signal_callback, agent_id, customer_id):
     """Main agent loop - no framework, just simple iteration."""
     # Define tools
-    tools = define_tools(payload, stream_callback)
+    tools = define_tools(payload, stream_callback, collect_signal_callback, agent_id, customer_id)
     
     # Create a dict mapping tool names to their callable tools
     tools_dict = {tool.name: tool for tool in tools}
@@ -211,22 +214,17 @@ async def run_agent_loop(payload, user_input: str, stream_callback=None):
             })
     
     # Send done signal
-    if stream_callback:
-        await stream_callback("[DONE]")
+    await stream_callback("[DONE]")
     
     return messages
 
 
 
-async def stream_agent_updates(payload, user_input: str):
+async def stream_agent_updates(payload, user_input: str, stream_callback, collect_signal_callback, agent_id, customer_id):
     """Stream agent responses to console."""
     print("Assistant: ", end="", flush=True)
     
-    # Create a simple callback that prints inline
-    async def inline_stream_callback(content):
-        print(content, end="", flush=True)
-    
-    await run_agent_loop(payload, user_input, inline_stream_callback)
+    await run_agent_loop(payload, user_input, stream_callback, collect_signal_callback, agent_id, customer_id)
     
     print("\n")
 
@@ -266,6 +264,15 @@ async def main():
     from types import SimpleNamespace
     payload = SimpleNamespace(schema=schema)
 
+    signals = []
+
+    # Create a simple callback that prints inline
+    async def inline_stream_callback(content):
+        print(content, end="", flush=True)
+    
+    def collect_signal_callback(signal_name):
+        signals.append(signal_name)
+    
     print("Agent ready! Type 'quit', 'exit', or 'q' to stop.\n")
     
     while True:
@@ -273,7 +280,10 @@ async def main():
         if user_input.lower() in ["quit", "exit", "q"]:
             print("exiting")
             break
-        await stream_agent_updates(payload, user_input)
+        await stream_agent_updates(payload, user_input, inline_stream_callback, collect_signal_callback, agent_id, customer_id)
+
+        if signals:
+            result = paid_client.usage.record_bulk(signals=signals)
 
 
 if __name__ == "__main__":
