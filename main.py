@@ -15,6 +15,7 @@ load_dotenv()
 paid_client = Paid(token=os.environ["PAIDAI_KEY"])
 agent_id = "2d958cd9-ecff-4619-8523-8c986a9dbb1f"
 customer_id = "0165cd09-66cb-4c4f-adba-0a5aeb171a4b"
+# customer_id = "test_customer_id_123"  # external id for testing
 
 llm = init_chat_model(
     model="gpt-4-turbo",
